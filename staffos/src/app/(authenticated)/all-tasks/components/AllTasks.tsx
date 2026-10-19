@@ -1107,12 +1107,25 @@ function TaskRow({
             </span>
           ) : <span className="text-slate-300">—</span>}
         </td>
+
+        <td className="py-3 pr-2 text-right" onClick={e => e.stopPropagation()}>
+          {row.source === 'task' && (
+            <button
+              onClick={onDuplicate}
+              disabled={busy}
+              title="Duplicate task (opens a new task with the same details)"
+              className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500 hover:text-blue-600 disabled:opacity-50"
+            >
+              <Copy size={14} />
+            </button>
+          )}
+        </td>
       </tr>
 
       {expanded && (
         <tr className="bg-slate-50 dark:bg-slate-800/60" onClick={e => e.stopPropagation()}>
           <td />
-          <td colSpan={6} className="pb-4 pr-4">
+          <td colSpan={7} className="pb-4 pr-4">
             <div className="space-y-3">
               <p className={`text-sm whitespace-pre-wrap ${row.description ? 'text-slate-600 dark:text-slate-300' : 'text-slate-400 italic'}`}>
                 {row.description || 'No description'}
@@ -1208,18 +1221,6 @@ function TaskRow({
                     className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-medium disabled:opacity-50"
                   >
                     {sending ? 'Sending…' : 'Send request'}
-                  </button>
-                </div>
-              )}
-
-              {row.source === 'task' && (
-                <div>
-                  <button
-                    onClick={onDuplicate}
-                    disabled={busy}
-                    className="text-xs text-slate-500 hover:text-blue-600 flex items-center gap-1 transition-colors disabled:opacity-50"
-                  >
-                    <Copy size={13} /> Duplicate task
                   </button>
                 </div>
               )}
@@ -1769,7 +1770,7 @@ export default function TasksHub() {
         priority: (['critical', 'high', 'medium', 'low'].includes(t.priority) ? t.priority : 'medium') as Priority,
         due_date: t.due_date || null, due_time: t.due_time || null,
         assignee: userMap[t.assigned_to] || userName || 'Me', assigneeNames: [userMap[t.assigned_to] || userName || 'Me'],
-        assigned_by: '', client: t.client_org_name || '', category: '',
+        assigned_by: 'Recurring schedule', client: t.client_org_name || '', category: '',
         recurring: true, frequency: t.recurring_tasks?.frequency || null,
         blocked: false, progress: 0, est_hours: 0,
         completed_at: t.completion_datetime || null, created_at: t.created_at || '', collaborator: false, firm_id: null,
@@ -1789,7 +1790,8 @@ export default function TasksHub() {
       priority: (['critical', 'high', 'medium', 'low'].includes(t.priority) ? t.priority : 'medium') as Priority,
       due_date: t.due_date || null, due_time: t.due_time || null,
       assignee: assigneeNames.length ? assigneeNames.join(', ') : 'Unassigned', assigneeNames,
-      assigned_by: t.assigned_by_name || '',
+      // Always show who assigned it: stored name, else look up the assigner's id
+      assigned_by: t.assigned_by_name || userMap[t.assigned_by] || '',
       client: t.client_org_name || (t.client_org_id ? clientMap[t.client_org_id] : '') || '',
       category: (t.category_id && catMap[t.category_id]) || (t.task_category && catSlugMap[t.task_category]) || '',
       recurring: !!(t.is_recurring || t.recurring), frequency: t.recurring || null,
@@ -2242,6 +2244,7 @@ export default function TasksHub() {
                   <th className="py-2 pr-4 font-semibold">Assigned to</th>
                   <th className="py-2 pr-4 font-semibold">Assigned by</th>
                   <th className="py-2 pr-2 font-semibold">Due</th>
+                  <th className="py-2 pr-2 font-semibold text-right">Copy</th>
                 </tr>
               </thead>
               <tbody>

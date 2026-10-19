@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Repeat, Plus, X, ChevronDown, Users, Clock, Calendar, Zap, Power, PowerOff,
-  Edit2, Trash2, CheckCircle2, Circle, PlayCircle, AlertTriangle, Search, RefreshCw,
+  Edit2, Trash2, CheckCircle2, Circle, PlayCircle, AlertTriangle, Search, RefreshCw, Copy,
 } from 'lucide-react';
 import { toast, Toaster } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
@@ -290,7 +290,11 @@ export default function RecurringTasksPanel() {
 
       // Save subtasks: update kept ones (keeps their id and progress), insert new, delete removed
       if (taskId) {
-        const keep = form.subtasks.filter((s) => s.title.trim());
+        // A NEW template (incl. a duplicate) must not reuse the source template's subtask ids,
+        // otherwise saving would move the source's subtasks onto the new template.
+        const keep = form.subtasks
+          .filter((s) => s.title.trim())
+          .map((s) => (editingId ? s : { ...s, id: undefined }));
         if (editingId) {
           const { data: existing } = await supabase.from('recurring_subtasks').select('id').eq('recurring_task_id', taskId);
           const keepIds = keep.map((s) => s.id).filter(Boolean) as string[];
