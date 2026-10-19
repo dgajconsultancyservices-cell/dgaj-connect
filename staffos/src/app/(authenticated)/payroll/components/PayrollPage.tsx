@@ -8,7 +8,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useVisibleFirms } from '@/lib/useVisibleFirms';
 import FirmFilterTabs from '@/components/FirmFilterTabs';
 import FirmBadge from '@/components/FirmBadge';
-import { buildHolidayMap, buildLeaveMap, computePeriodStats } from '@/lib/attendanceCalendar';
+import { buildHolidayMap, buildLeaveMap, computePeriodStats, loadWeeklyOffByUser, weeklyOffOf, computeMonthlyPay, fullMonthsRange, type MonthlyPayBreakdown } from '@/lib/attendanceCalendar';
 
 interface PayrollRecord {
   id: string;
@@ -118,6 +118,8 @@ export default function PayrollPage() {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
   });
 
+  // Month-by-month pay from attendance (null when the form was typed by hand)
+  const [payBreakdown, setPayBreakdown] = useState<MonthlyPayBreakdown | null>(null);
   const [processForm, setProcessForm] = useState({
     user_id: '',
     pay_period_start: '',
@@ -235,9 +237,10 @@ export default function PayrollPage() {
     overtimePay = 0,
     bonus = 0,
     otherDeduction = 0,
+    earnedFromMonths?: number, // month-by-month amount (each month at its own per-day rate)
   ) => {
     const perDaySalary = workingDays > 0 ? totalSalary / workingDays : 0;
-    const amountPayable = perDaySalary * daysPresent;
+    const amountPayable = earnedFromMonths ?? perDaySalary * daysPresent;
     const unpaidSalary = Math.max(0, totalSalary - Math.max(0, amountPayable));
     const totalDeducted = unpaidSalary + Math.max(0, otherDeduction);
     const totalToPay = Math.max(0, amountPayable + Math.max(0, overtimePay) + Math.max(0, bonus) - Math.max(0, otherDeduction));
@@ -254,6 +257,7 @@ export default function PayrollPage() {
     parseFloat(processForm.overtime_pay) || 0,
     parseFloat(processForm.bonus) || 0,
     parseFloat(processForm.other_deduction) || 0,
+    payBreakdown?.amountPayable,
   );
   const hourlyRate = livePreview.perDaySalary > 0 ? livePreview.perDaySalary / 8 : 0;
 
@@ -271,8 +275,10 @@ export default function PayrollPage() {
       // weekdays minus company holidays (weekly-off rows included); present = worked
       // days on working days; paid leave is payable; absent = past working days with
       // no work and no approved leave.
+      // Holidays cover the WHOLE calendar months, because each month's per-day rate uses its full working days
+      const fullRange = fullMonthsRange(start, end);
       const [{ data: hols }, { data: att }, { data: leaves }] = await Promise.all([
-        supabase.from('company_holidays').select('name, holiday_date').gte('holiday_date', start).lte('holiday_date', end),
+        supabase.from('company_holidays').select('name, holiday_date').gte('holiday_date', fullRange.start).lte('holiday_date', fullRange.end),
         supabase.from('attendance_records')
           .select('work_date, status, clock_in, total_hours, overtime_hours')
           .eq('user_id', userId).gte('work_date', start).lte('work_date', end),
@@ -281,6 +287,7 @@ export default function PayrollPage() {
           .eq('user_id', userId).in('status', ['approved', 'pending'])
           .lte('start_date', end).gte('end_date', start),
       ]);
+      const weeklyOffMap = await loadWeeklyOffByUser(supabase, [userId]);
       const stats = computePeriodStats({
         userId,
         startDate: start,
@@ -288,15 +295,28 @@ export default function PayrollPage() {
         records: (att || []) as any[],
         holidayMap: buildHolidayMap(hols || []),
         leaveMap: buildLeaveMap((leaves || []) as any[], start, end),
+        weeklyOff: weeklyOffOf(weeklyOffMap, userId),
+      });
+      // Month by month: each calendar month's monthly salary / its own working days x days in the period
+      const pay = computeMonthlyPay({
+        userId,
+        startDate: start,
+        endDate: end,
+        monthlySalary: structure ? getTotalMonthlySalary(structure) : 0,
+        records: (att || []) as any[],
+        holidayMap: buildHolidayMap(hols || []),
+        leaveMap: buildLeaveMap((leaves || []) as any[], start, end),
+        weeklyOff: weeklyOffOf(weeklyOffMap, userId),
       });
       const overtimeTotal = (att || []).reduce((s: number, r: any) => s + Number(r.overtime_hours || 0), 0);
 
+      setPayBreakdown(structure ? pay : null);
       setProcessForm(p => ({
         ...p,
-        total_salary: structure ? String(getTotalMonthlySalary(structure)) : p.total_salary,
-        working_days: String(stats.workingDays),
-        days_present: String(stats.workedDays + stats.paidLeaveDays),
-        days_absent: String(stats.absentDays),
+        total_salary: structure ? String(Math.round(pay.salaryForPeriod * 100) / 100) : p.total_salary,
+        working_days: String(pay.workingDays),
+        days_present: String(pay.daysPresent),
+        days_absent: String(pay.daysAbsent),
         avg_hours_per_day: stats.workedDays > 0 ? stats.avgHoursPerWorkedDay.toFixed(2) : '',
         overtime_hours: overtimeTotal > 0 ? overtimeTotal.toFixed(2) : '',
       }));
@@ -317,6 +337,7 @@ export default function PayrollPage() {
 
   const openEditRecord = (record: PayrollRecord) => {
     setEditingRecordId(record.id);
+    setPayBreakdown(null);
     setProcessForm({
       user_id: record.user_id,
       pay_period_start: record.pay_period_start,
@@ -343,6 +364,7 @@ export default function PayrollPage() {
 
   const openNewPayrollForm = () => {
     setEditingRecordId(null);
+    setPayBreakdown(null);
     setProcessForm({
       user_id: '', pay_period_start: '', pay_period_end: '', total_salary: '',
       working_days: '', days_present: '', days_absent: '', deduction_per_absent_day: '1000',
@@ -370,7 +392,7 @@ export default function PayrollPage() {
 
     setProcessing(true);
     try {
-      const calc = computeSimplePayroll(totalSalary, workingDays, daysPresent, overtimePay, bonus, otherDeduction);
+      const calc = computeSimplePayroll(totalSalary, workingDays, daysPresent, overtimePay, bonus, otherDeduction, payBreakdown?.amountPayable);
 
       const payload = {
         user_id: processForm.user_id,
@@ -865,18 +887,52 @@ const handleSaveSalaryStructure = async () => {
                 <p className="text-xs text-slate-400 flex items-center gap-1.5"><RefreshCw size={11} className="animate-spin" /> Auto-filling from attendance…</p>
               )}
 
+              {payBreakdown && payBreakdown.rows.length > 0 && (
+                <div className="border border-slate-200 dark:border-slate-600 rounded-xl overflow-hidden">
+                  <p className="text-xs font-600 px-3 py-2 bg-slate-50 dark:bg-slate-700/50 text-slate-700 dark:text-slate-300">
+                    Month-wise pay: each month uses its own working days
+                  </p>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="text-slate-500 dark:text-slate-400">
+                          <th className="text-left px-3 py-1.5 font-600">Month</th>
+                          <th className="text-right px-2 py-1.5 font-600">Month working days</th>
+                          <th className="text-right px-2 py-1.5 font-600">Days in period</th>
+                          <th className="text-right px-2 py-1.5 font-600">Present</th>
+                          <th className="text-right px-2 py-1.5 font-600">Per day</th>
+                          <th className="text-right px-3 py-1.5 font-600">Payable</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {payBreakdown.rows.map((r) => (
+                          <tr key={r.month} className="border-t border-slate-100 dark:border-slate-700 text-slate-700 dark:text-slate-200">
+                            <td className="px-3 py-1.5">{getMonthYear(`${r.month}-01`)}</td>
+                            <td className="text-right px-2">{r.monthWorkingDays}</td>
+                            <td className="text-right px-2">{r.workingDays}</td>
+                            <td className="text-right px-2">{r.daysPresent}</td>
+                            <td className="text-right px-2">{formatCurrency(r.perDaySalary)}</td>
+                            <td className="text-right px-3 font-600">{formatCurrency(r.amountPayable)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
               {/* Row 1: working days, total salary, per-day salary (per-day is derived, read-only) */}
               <div className="grid grid-cols-3 gap-3">
                 <div>
                   <label className="block text-xs font-600 text-slate-700 dark:text-slate-300 mb-1.5">Working Days *</label>
                   <input type="number" min="0" value={processForm.working_days}
-                    onChange={e => setProcessForm(p => ({ ...p, working_days: e.target.value }))}
+                    onChange={e => { setPayBreakdown(null); setProcessForm(p => ({ ...p, working_days: e.target.value })); }}
                     className="w-full border border-slate-200 dark:border-slate-600 rounded-xl px-3 py-2.5 text-sm bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-300" />
                 </div>
                 <div>
                   <label className="block text-xs font-600 text-slate-700 dark:text-slate-300 mb-1.5">Total Salary (₹) *</label>
                   <input type="number" min="0" value={processForm.total_salary}
-                    onChange={e => setProcessForm(p => ({ ...p, total_salary: e.target.value }))}
+                    onChange={e => { setPayBreakdown(null); setProcessForm(p => ({ ...p, total_salary: e.target.value })); }}
                     className="w-full border border-slate-200 dark:border-slate-600 rounded-xl px-3 py-2.5 text-sm bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-300" />
                 </div>
                 <div>
@@ -892,7 +948,7 @@ const handleSaveSalaryStructure = async () => {
                 <div>
                   <label className="block text-xs font-600 text-slate-700 dark:text-slate-300 mb-1.5">Days Present (present + paid leave) *</label>
                   <input type="number" min="0" value={processForm.days_present}
-                    onChange={e => setProcessForm(p => ({ ...p, days_present: e.target.value }))}
+                    onChange={e => { setPayBreakdown(null); setProcessForm(p => ({ ...p, days_present: e.target.value })); }}
                     className="w-full border border-slate-200 dark:border-slate-600 rounded-xl px-3 py-2.5 text-sm bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-300" />
                 </div>
                 <div>

@@ -1,9 +1,48 @@
 // Shared attendance calendar logic.
 //
-// Used by the Attendance Records tab (own cards + team table) and by Payroll
-// auto-fill, so working days, present days and absent days are counted the
-// same way everywhere. Working days come from the company calendar
-// (company_holidays, which also holds weekly-off rows) minus Sat/Sun.
+// Used by the Attendance Records tab (own cards + team table), Attendance Audit
+// and Payroll auto-fill, so working days, present days and absent days are
+// counted the same way everywhere. Working days come from the company calendar
+// (company_holidays, which also holds weekly-off rows) minus each employee's
+// weekly off days, which are set per firm in Firm Configuration (firms.settings.weekly_off_days).
+import type { SupabaseClient } from '@supabase/supabase-js';
+
+// Firm Configuration's default when a firm has no weekly off days saved.
+export const DEFAULT_WEEKLY_OFF: number[] = [0];
+
+/** Weekly off days (0 = Sunday … 6 = Saturday) for one employee, from their firm. */
+export function weeklyOffOf(map: Record<string, number[]>, userId: string): number[] {
+  return map[userId] ?? DEFAULT_WEEKLY_OFF;
+}
+
+/**
+ * Loads each employee's weekly off days from their firm's settings.
+ * Employees whose firm has no saved setting get DEFAULT_WEEKLY_OFF.
+ */
+export async function loadWeeklyOffByUser(
+  supabase: SupabaseClient,
+  userIds?: string[],
+): Promise<Record<string, number[]>> {
+  if (userIds && userIds.length === 0) return {};
+  let pq = supabase.from('user_profiles').select('id, firm_id');
+  if (userIds) pq = pq.in('id', userIds);
+  const { data: profiles } = await pq;
+  const profs = (profiles || []) as { id: string; firm_id: string | null }[];
+  const firmIds = Array.from(new Set(profs.map((p) => p.firm_id).filter(Boolean))) as string[];
+
+  const byFirm: Record<string, number[]> = {};
+  if (firmIds.length > 0) {
+    const { data: firms } = await supabase.from('firms').select('id, settings').in('id', firmIds);
+    (firms || []).forEach((f: any) => {
+      const days = f.settings?.weekly_off_days;
+      byFirm[f.id] = Array.isArray(days) ? days.map(Number) : DEFAULT_WEEKLY_OFF;
+    });
+  }
+
+  const out: Record<string, number[]> = {};
+  profs.forEach((p) => { out[p.id] = (p.firm_id && byFirm[p.firm_id]) || DEFAULT_WEEKLY_OFF; });
+  return out;
+}
 
 export type AttendanceStatus =
   | 'present' | 'absent' | 'late' | 'half_day' | 'work_from_home'
@@ -44,10 +83,11 @@ export function eachDateInRange(start: string, end: string, cb: (dateStr: string
 export const dayHours = (r: { total_hours?: number | null; overtime_hours?: number | null }) =>
   (Number(r.total_hours) || 0) + (Number(r.overtime_hours) || 0);
 
-export function isWeekend(dateStr: string): boolean {
+/** True when the date is one of the employee's weekly off days (from their firm). */
+export function isWeekend(dateStr: string, weeklyOff: number[]): boolean {
   const [y, m, d] = dateStr.split('-').map(Number);
   const dow = new Date(y, m - 1, d).getDay();
-  return dow === 0 || dow === 6;
+  return weeklyOff.includes(dow);
 }
 
 /** Company calendar for a date range: one entry per holiday date (includes weekly-off rows). */
@@ -92,10 +132,11 @@ export function resolveDayStatus(
   rec: { status: AttendanceStatus; clock_in: string | null } | undefined,
   holidayMap: HolidayMap,
   leaveMap: LeaveMap,
+  weeklyOff: number[],
 ): AttendanceStatus | null {
   if (rec && (['present', 'late', 'half_day', 'work_from_home'].includes(rec.status) || rec.clock_in)) return rec.status;
   if (holidayMap[dateStr] || rec?.status === 'holiday') return 'holiday';
-  if (isWeekend(dateStr) || rec?.status === 'weekend') return 'weekend';
+  if (isWeekend(dateStr, weeklyOff) || rec?.status === 'weekend') return 'weekend';
   const leave = leaveMap[`${userId}|${dateStr}`];
   if (leave && !leave.pending) return leave.status;
   if (dateStr < toDateStr(new Date())) return 'absent';
@@ -124,8 +165,9 @@ export function computePeriodStats(opts: {
   records: CalendarRecord[];
   holidayMap: HolidayMap;
   leaveMap: LeaveMap;
+  weeklyOff: number[];
 }): PeriodStats {
-  const { userId, startDate, endDate, records, holidayMap, leaveMap } = opts;
+  const { userId, startDate, endDate, records, holidayMap, leaveMap, weeklyOff } = opts;
   const byDate: Record<string, CalendarRecord> = {};
   records.forEach((r) => { byDate[String(r.work_date).slice(0, 10)] = r; });
 
@@ -133,9 +175,9 @@ export function computePeriodStats(opts: {
   let workedHours = 0;
 
   eachDateInRange(startDate, endDate, (ds) => {
-    if (isWeekend(ds) || holidayMap[ds]) return;
+    if (isWeekend(ds, weeklyOff) || holidayMap[ds]) return;
     const rec = byDate[ds];
-    const st = resolveDayStatus(userId, ds, rec, holidayMap, leaveMap);
+    const st = resolveDayStatus(userId, ds, rec, holidayMap, leaveMap, weeklyOff);
     if (st === 'holiday' || st === 'weekend') return;
     workingDays++;
     if (st === 'present' || st === 'late' || st === 'half_day' || st === 'work_from_home') {

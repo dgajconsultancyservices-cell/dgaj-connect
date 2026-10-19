@@ -7,7 +7,7 @@ import { useRouter } from 'next/navigation';
 import { AlertTriangle, MapPinOff, WifiOff, Download, RefreshCw, ChevronLeft, Calendar, Users, Clock, BarChart2 } from 'lucide-react';
 import { toast, Toaster } from 'sonner';
 import Icon from '@/components/ui/AppIcon';
-import { buildHolidayMap, buildLeaveMap, computePeriodStats } from '@/lib/attendanceCalendar';
+import { buildHolidayMap, buildLeaveMap, computePeriodStats, loadWeeklyOffByUser, weeklyOffOf } from '@/lib/attendanceCalendar';
 
 interface AuditEmployee {
   id: string;
@@ -344,6 +344,8 @@ export default function AttendanceAudit() {
 
       const holidayMap = buildHolidayMap(holRes.data || []);
       const leaveMap = buildLeaveMap((leaveRes.data || []) as any[], dateFrom, dateTo);
+      // Weekly off days come from each employee's firm (Firm Configuration)
+      const weeklyOffMap = await loadWeeklyOffByUser(supabase, roster.map((e) => e.id));
 
       const byUser: Record<string, any[]> = {};
       (attRes.data || []).forEach((r: any) => {
@@ -353,7 +355,7 @@ export default function AttendanceAudit() {
 
       const rows: UserMonthlyHoursSummary[] = roster.map((e) => {
         const recs = byUser[e.id] || [];
-        const s = computePeriodStats({ userId: e.id, startDate: dateFrom, endDate: dateTo, records: recs, holidayMap, leaveMap });
+        const s = computePeriodStats({ userId: e.id, startDate: dateFrom, endDate: dateTo, records: recs, holidayMap, leaveMap, weeklyOff: weeklyOffOf(weeklyOffMap, e.id) });
         return {
           user_id: e.id,
           full_name: e.full_name || 'Unknown',

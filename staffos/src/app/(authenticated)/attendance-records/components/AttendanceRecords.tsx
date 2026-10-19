@@ -8,7 +8,7 @@ import Link from 'next/link';
 import { toast, Toaster } from 'sonner';
 import {
   AttendanceStatus, LeaveMap, HolidayMap, pad2, toDateStr, dayHours, resolveDayStatus,
-  buildHolidayMap, buildLeaveMap, computePeriodStats,
+  buildHolidayMap, buildLeaveMap, computePeriodStats, loadWeeklyOffByUser, weeklyOffOf,
 } from '@/lib/attendanceCalendar';
 
 type CorrectionStatus = 'pending' | 'approved' | 'rejected';
@@ -116,6 +116,7 @@ export default function AttendanceRecords() {
   const [userMonthlyHours, setUserMonthlyHours] = useState<UserMonthlyHours[]>([]);
   const [holidayMap, setHolidayMap] = useState<HolidayMap>({});                       // 'YYYY-MM-DD' -> holiday name
   const [leaveMap, setLeaveMap] = useState<LeaveMap>({});                             // 'userId|YYYY-MM-DD' -> leave
+  const [weeklyOffByUser, setWeeklyOffByUser] = useState<Record<string, number[]>>({}); // userId -> weekly off days (from their firm)
   const [historyView, setHistoryView] = useState<'list' | 'calendar'>('calendar');
   // List scope: 'mine' (default for everyone) or 'team' (managers/directors/executives only)
   const [historyScope, setHistoryScope] = useState<'mine' | 'team'>('mine');
@@ -273,10 +274,11 @@ export default function AttendanceRecords() {
       ]);
       const hMap = buildHolidayMap(hols || []);
       const lMap = buildLeaveMap((leaves || []) as any[], startDate, endDate);
+      const woMap = await loadWeeklyOffByUser(supabase, Object.keys(rowsByUser));
 
       const rows: UserMonthlyHours[] = Object.keys(rowsByUser).map((uid) => {
         const recs = rowsByUser[uid];
-        const stats = computePeriodStats({ userId: uid, startDate, endDate, records: recs, holidayMap: hMap, leaveMap: lMap });
+        const stats = computePeriodStats({ userId: uid, startDate, endDate, records: recs, holidayMap: hMap, leaveMap: lMap, weeklyOff: weeklyOffOf(woMap, uid) });
         return {
           user_id: uid,
           full_name: profileByUser[uid]?.full_name || 'Unknown',
@@ -299,6 +301,12 @@ export default function AttendanceRecords() {
 
   useEffect(() => { fetchProfile(); }, [fetchProfile]);
   useEffect(() => { fetchRecords(); }, [fetchRecords]);
+  // Weekly off days for the signed-in employee and everyone shown in the records
+  useEffect(() => {
+    const ids = Array.from(new Set([effectiveUserId || '', ...records.map((r) => r.user_id)].filter(Boolean)));
+    if (ids.length === 0) return;
+    loadWeeklyOffByUser(supabase, ids).then((m) => setWeeklyOffByUser((prev) => ({ ...prev, ...m })));
+  }, [records, effectiveUserId]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (activeTab !== 'history') fetchCorrections(); }, [fetchCorrections, activeTab]);
   useEffect(() => { if (activeTab === 'monthly-hours') fetchUserMonthlyHours(); }, [fetchUserMonthlyHours, activeTab]);
 
@@ -427,10 +435,10 @@ export default function AttendanceRecords() {
   // holiday or approved-leave day becomes Holiday / Leave.
   const effectiveRecords = useMemo(
     () => records.map((r) => {
-      const st = resolveDayStatus(r.user_id, String(r.work_date).slice(0, 10), r, holidayMap, leaveMap);
+      const st = resolveDayStatus(r.user_id, String(r.work_date).slice(0, 10), r, holidayMap, leaveMap, weeklyOffOf(weeklyOffByUser, r.user_id));
       return st && st !== r.status ? { ...r, status: st } : r;
     }),
-    [records, holidayMap, leaveMap],
+    [records, holidayMap, leaveMap, weeklyOffByUser],
   );
 
   // The signed-in employee's own days, keyed by date, for the calendar view
@@ -457,7 +465,7 @@ export default function AttendanceRecords() {
   // for managers the list mixes many people, so we can't know who is missing)
   const missingAbsentDays = isManager ? 0 : Array.from({ length: new Date(filterYearForStats, filterMonthForStats, 0).getDate() }).filter((_, i) => {
     const ds = `${filterYearForStats}-${pad2(filterMonthForStats)}-${pad2(i + 1)}`;
-    return !ownRecordsByDate[ds] && resolveDayStatus(effectiveUserId || '', ds, undefined, holidayMap, leaveMap) === 'absent';
+    return !ownRecordsByDate[ds] && resolveDayStatus(effectiveUserId || '', ds, undefined, holidayMap, leaveMap, weeklyOffOf(weeklyOffByUser, effectiveUserId || '')) === 'absent';
   }).length;
   const absentDays = ownRecords.filter(r => r.status === 'absent').length + missingAbsentDays;
   const lateDays = ownRecords.filter(r => r.status === 'late').length;
@@ -479,6 +487,7 @@ export default function AttendanceRecords() {
     records: ownRecords,
     holidayMap,
     leaveMap,
+    weeklyOff: weeklyOffOf(weeklyOffByUser, effectiveUserId || ''),
   });
   const workingDaysInMonth = periodStats.workingDays;
 
@@ -529,7 +538,7 @@ export default function AttendanceRecords() {
           .maybeSingle();
         let status: AttendanceStatus = 'absent';
         if (hol) status = 'holiday';
-        else if (dow === 0 || dow === 6) status = 'weekend';
+        else if (weeklyOffOf(weeklyOffByUser, uid).includes(dow)) status = 'weekend';
         else if (lv) status = /unpaid|lop|loss/i.test(String(lv.leave_type || '')) ? 'unpaid_leave' : 'paid_leave';
 
         // Today/future working day with no clock-in: nothing to attach overtime to yet
@@ -782,7 +791,7 @@ export default function AttendanceRecords() {
                   const dateStr = `${filterYear}-${pad2(filterMonth)}-${pad2(day)}`;
                   const rec = ownRecordsByDate[dateStr];
                   const uid = effectiveUserId || '';
-                  const st = resolveDayStatus(uid, dateStr, rec, holidayMap, leaveMap);
+                  const st = resolveDayStatus(uid, dateStr, rec, holidayMap, leaveMap, weeklyOffOf(weeklyOffByUser, uid));
                   const cfg = st ? statusConfig[st] : null;
                   const pendingLeave = leaveMap[`${uid}|${dateStr}`]?.pending;
                   const isToday = dateStr === toDateStr(new Date());
