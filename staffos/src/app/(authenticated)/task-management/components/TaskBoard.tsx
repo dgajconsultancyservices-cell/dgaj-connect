@@ -44,6 +44,8 @@ interface Task {
   is_overdue?: boolean;
   is_template?: boolean;
   task_category?: string;
+  firm_id?: string | null;
+  firm_ids?: string[] | null;
   client_org_id?: string | null;
   client_org_name?: string | null;
   organisation_relates_to?: string | null;
@@ -1086,50 +1088,26 @@ export default function TaskBoard() {
     }
   };
 
+  // Copy Task: opens the New Task form already filled with this task's details, so the
+  // user can change firm, assignee, date etc. before saving. Nothing is saved until they submit.
   const handleCopyTask = async (task: Task) => {
-    const uid = effectiveUserId;
-    if (!uid) return;
-    try {
-      const copiedChecklist = task.checklist.map((item) => ({
-        ...item,
-        id: `cl-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-        done: false,
-      }));
-
-      const taskData = {
-        title: `${task.title} (Copy)`,
-        description: task.description,
-        priority: task.priority,
-        status: 'todo' as TaskStatus,
-        due_date: task.due_date || null,
-        due_time: task.due_time || null,
-        assigned_to: task.assigned_to,
-        assigned_to_user_id: task.assigned_to_user_id,
-        assigned_to_name: task.assigned_to_name,
-        assigned_to_dept: task.assigned_to_dept,
-        assigned_user_ids: task.assigned_user_ids || [],
-        assigned_by: uid,
-        assigned_by_name: userName,
-        assigned_by_dept: userDept,
-        checklist: copiedChecklist,
-        tags: task.tags || [],
-        recurring: task.recurring || null,
-        notify_before_minutes: task.notify_before_minutes || 30,
-        is_template: false,
-        task_category: task.task_category || 'general',
-        client_org_id: task.client_org_id || null,
-        client_org_name: task.client_org_name || null,
-        organisation_relates_to: task.organisation_relates_to || null,
-      };
-
-      const { error } = await supabase.from('tasks').insert(taskData);
-      if (error) throw error;
-
-      // Real-time will add to state
-      toast.success(`Task copied: "${task.title} (Copy)"`, { duration: 3000 });
-    } catch (err: any) {
-      toast.error(err.message || 'Failed to copy task');
-    }
+    const { data: subs } = await supabase
+      .from('task_subtasks').select('title').eq('task_id', task.id).order('sort_order');
+    setNewTask({
+      ...defaultForm,
+      title: task.title,
+      description: task.description || '',
+      priority: task.priority,
+      dueDate: task.due_date || '',
+      dueTime: task.due_time ? String(task.due_time).slice(0, 5) : '',
+      firmIds: task.firm_ids?.length ? task.firm_ids : (task.firm_id ? [task.firm_id] : []),
+      assignedUserIds: task.assigned_user_ids?.length ? task.assigned_user_ids : (task.assigned_to ? [task.assigned_to] : []),
+      clientOrgId: task.client_org_id || '',
+      organisationRelatesTo: task.organisation_relates_to || '',
+      taskCategory: task.task_category || 'general',
+      subtasks: (subs || []).map((s: any) => ({ title: s.title, assigned_to: '' })),
+    });
+    setShowNewTask(true);
   };
 
   const fetchTaskNotes = useCallback(async (taskId: string) => {

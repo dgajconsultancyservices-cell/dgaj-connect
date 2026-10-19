@@ -346,6 +346,14 @@ export default function RecurringTasksPanel() {
     fetchInstances();
   };
 
+  // Duplicate: opens the form with this template's details as a NEW template.
+  // Nothing is saved until Save; the start date resets to today so old occurrences are not back-filled.
+  const duplicateTemplate = (t: RecurringTask) => {
+    openEdit(t);
+    setEditingId(null);
+    setForm((f) => ({ ...f, start_date: ymdLocal(new Date()) }));
+  };
+
   const generateMore = async (t: RecurringTask) => {
     setGeneratingId(t.id);
     try {
@@ -482,6 +490,9 @@ export default function RecurringTasksPanel() {
                       </button>
                       <button onClick={() => generateMore(t)} disabled={generatingId === t.id} title="Generate more occurrences" className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500 disabled:opacity-50">
                         <Zap size={14} className={generatingId === t.id ? 'animate-pulse' : ''} />
+                      </button>
+                      <button onClick={() => duplicateTemplate(t)} title="Duplicate" className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500">
+                        <Copy size={14} />
                       </button>
                       <button onClick={() => openEdit(t)} title="Edit" className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500">
                         <Edit2 size={14} />

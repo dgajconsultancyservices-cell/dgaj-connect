@@ -771,7 +771,7 @@ import InstanceSubtasks from '@/components/InstanceSubtasks';
 import {
   CheckCircle2, Circle, AlertTriangle, Clock, Flag, Repeat, Users, Calendar, CalendarDays,
   Loader2, RefreshCw, Plus, ArrowLeft, Search, X, SlidersHorizontal, ChevronDown, Zap,
-  BarChart3, TrendingUp, Inbox, CheckSquare, Building2, Tag, User, Trash2,
+  BarChart3, TrendingUp, Inbox, CheckSquare, Building2, Tag, User, Trash2, Copy,
 } from 'lucide-react';
 import { toast, Toaster } from 'sonner';
 import { useRouter } from 'next/navigation';
@@ -995,6 +995,7 @@ interface TaskRowProps {
   onComplete: () => void;
   onStatus: (s: TaskStatus) => void;
   onDelete: () => void;
+  onDuplicate: () => void;
   onRequest: (userId: string) => Promise<boolean>;
   onRespond: (accept: boolean) => void;
 }
@@ -1002,7 +1003,7 @@ interface TaskRowProps {
 /* One table row. Click the row to open the description; click again to close. */
 function TaskRow({
   row, today, expanded, busy, showAssignee, firm, canDelete, candidates,
-  onToggle, onComplete, onStatus, onDelete, onRequest, onRespond,
+  onToggle, onComplete, onStatus, onDelete, onDuplicate, onRequest, onRespond,
 }: TaskRowProps) {
   const [pick, setPick] = useState('');
   const [sending, setSending] = useState(false);
@@ -1211,6 +1212,18 @@ function TaskRow({
                 </div>
               )}
 
+              {row.source === 'task' && (
+                <div>
+                  <button
+                    onClick={onDuplicate}
+                    disabled={busy}
+                    className="text-xs text-slate-500 hover:text-blue-600 flex items-center gap-1 transition-colors disabled:opacity-50"
+                  >
+                    <Copy size={13} /> Duplicate task
+                  </button>
+                </div>
+              )}
+
               {canDelete && row.source === 'task' && (
                 <div>
                   <button
@@ -1232,26 +1245,38 @@ function TaskRow({
 
 /* ───────────────────────── Create modal ───────────────────────── */
 
+// Details copied from an existing task when the user clicks Duplicate
+interface DuplicateSeed {
+  title: string; description: string; priority: Priority; due_date: string; due_time: string;
+  firmIds: string[]; assignees: string[]; clientOrgId: string; relatesTo: string;
+  category_id: string; subtasks: string[];
+}
+
 function CreateTaskModal({
   onClose, onCreated, users, categories, clients, uid, userName, userDept, supabase,
-  ownFirmId, firms, canPickFirm,
+  ownFirmId, firms, canPickFirm, initial,
 }: {
   onClose: () => void; onCreated: () => void;
   users: UserProfile[]; categories: Category[]; clients: ClientOrg[];
   uid: string; userName: string; userDept: string; supabase: any;
   ownFirmId: string | null; firms: { id: string; name: string; code: string }[]; canPickFirm: boolean;
+  initial?: DuplicateSeed | null;
 }) {
   const [saving, setSaving] = useState(false);
-  const [f, setF] = useState({
-    title: '', description: '', priority: 'medium' as Priority, assignees: [uid] as string[],
+  const [f, setF] = useState(() => ({
+    title: initial?.title ?? '',
+    description: initial?.description ?? '',
+    priority: (initial?.priority ?? 'medium') as Priority,
+    assignees: (initial?.assignees?.length ? initial.assignees : [uid]) as string[],
     // Defaults to the creator's own firm. Employees stay in it; directors and managers can pick a visible firm.
-    firmIds: (ownFirmId ? [ownFirmId] : []) as string[],
-    due_date: '', due_time: '', recurring: '', category_id: '',
+    firmIds: (initial ? initial.firmIds : (ownFirmId ? [ownFirmId] : [])) as string[],
+    due_date: initial?.due_date ?? '', due_time: initial?.due_time ?? '', recurring: '',
+    category_id: initial?.category_id ?? '',
     // Client picker value: "client:<id>" (client organisation), "firm:<id>" (subsidiary) or "" (Internal)
-    pick: '',
+    pick: initial?.clientOrgId ? `client:${initial.clientOrgId}` : '',
     // Subtasks added on the form (title + optional assignee)
-    subtasks: [] as { title: string; assigned_to: string }[],
-  });
+    subtasks: (initial?.subtasks ?? []).map((t) => ({ title: t, assigned_to: '' })) as { title: string; assigned_to: string }[],
+  }));
   const set = (k: string, v: string) => setF(p => ({ ...p, [k]: v }));
 
   // Subsidiaries the user can see, offered alongside clients in the client picker
@@ -1270,6 +1295,13 @@ function CreateTaskModal({
       if (!error) setSubs((data as { id: string; name: string }[]) || []);
     })();
   }, [uid, supabase]);
+
+  // Duplicate of a task that was for a subsidiary: pick it by name once the list is loaded
+  useEffect(() => {
+    if (!initial?.relatesTo || initial.clientOrgId) return;
+    const s = subs.find((x) => x.name === initial.relatesTo);
+    if (s) setF((p) => (p.pick ? p : { ...p, pick: `firm:${s.id}` }));
+  }, [subs]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const inputCls = 'w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500';
   const labelCls = 'block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1';
@@ -1545,6 +1577,31 @@ export default function TasksHub() {
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
+  const [duplicateSeed, setDuplicateSeed] = useState<DuplicateSeed | null>(null);
+
+  // Opens the New Task form with this task's details (firm, people, client, subtasks copied).
+  // The user can change anything before saving; nothing is saved until they submit.
+  const duplicateTask = async (r: Row) => {
+    const raw = rawTasks.find((t) => t.__source === 'task' && t.id === r.id);
+    if (!raw) return;
+    const { data: subs } = await supabase
+      .from('task_subtasks').select('title').eq('task_id', raw.id).order('sort_order');
+    setDuplicateSeed({
+      title: raw.title || '',
+      description: raw.description || '',
+      priority: (raw.priority || 'medium') as Priority,
+      due_date: raw.due_date || '',
+      due_time: raw.due_time ? String(raw.due_time).slice(0, 5) : '',
+      firmIds: Array.isArray(raw.firm_ids) && raw.firm_ids.length ? raw.firm_ids : (raw.firm_id ? [raw.firm_id] : []),
+      assignees: Array.isArray(raw.assigned_user_ids) && raw.assigned_user_ids.length ? raw.assigned_user_ids : (raw.assigned_to ? [raw.assigned_to] : []),
+      clientOrgId: raw.client_org_id || '',
+      relatesTo: raw.organisation_relates_to || '',
+      category_id: raw.category_id || '',
+      subtasks: (subs || []).map((s: any) => s.title),
+    });
+    setExpanded(null);
+    setShowCreate(true);
+  };
 
   // Directors and managers can switch between their own tasks and the firm-scoped list.
   // Employees only ever see their own tasks (effectiveScope).
@@ -2017,7 +2074,8 @@ export default function TasksHub() {
       <Toaster position="top-right" richColors />
       {showCreate && uid && (
         <CreateTaskModal
-          onClose={() => setShowCreate(false)} onCreated={loadTasks}
+          onClose={() => { setShowCreate(false); setDuplicateSeed(null); }} onCreated={loadTasks}
+          initial={duplicateSeed}
           users={users} categories={categories} clients={clients}
           uid={uid} userName={userName} userDept={userDept} supabase={supabase}
           ownFirmId={ownFirmId}
@@ -2215,6 +2273,7 @@ export default function TasksHub() {
                           onComplete={() => changeStatus(r, r.status === 'completed' ? 'not_started' : 'completed')}
                           onStatus={s => changeStatus(r, s)}
                           onDelete={() => deleteTask(r)}
+                          onDuplicate={() => duplicateTask(r)}
                           onRequest={userId => requestCollaborator(r, userId)}
                           onRespond={accept => respondInvite(r, accept)}
                         />
