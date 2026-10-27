@@ -59,14 +59,10 @@ const emptyForm = {
 /** Returns an error message, or null if the client form is valid. */
 function validateClient(f: typeof emptyForm): string | null {
   if (!f.name.trim()) return 'Client name is required';
-  if (!f.gst_number.trim()) return 'GST number is required';
-  if (!GST_RE.test(f.gst_number.trim().toUpperCase())) return 'GST number is not in a valid format (15 characters)';
-  if (!f.pan_number.trim()) return 'PAN is required';
-  if (!PAN_RE.test(f.pan_number.trim().toUpperCase())) return 'PAN is not in a valid format (10 characters)';
-  if (!f.address.trim()) return 'Address is required';
-  if (!f.contact_person.trim()) return 'Contact person name is required';
-  if (!f.contact_phone.trim()) return 'Contact number is required';
-  if (f.contact_phone.replace(/\D/g, '').length < 10) return 'Contact number must have at least 10 digits';
+  // Everything else is optional; format is only checked when a value is entered.
+  if (f.gst_number.trim() && !GST_RE.test(f.gst_number.trim().toUpperCase())) return 'GST number is not in a valid format (15 characters)';
+  if (f.pan_number.trim() && !PAN_RE.test(f.pan_number.trim().toUpperCase())) return 'PAN is not in a valid format (10 characters)';
+  if (f.contact_phone.trim() && f.contact_phone.replace(/\D/g, '').length < 10) return 'Contact number must have at least 10 digits';
   return null;
 }
 
@@ -150,11 +146,11 @@ export default function ClientOrganisations({ onClose, onOrgAdded, canManage, va
     setSaving(true);
     const payload = {
       name: form.name.trim(),
-      gst_number: form.gst_number.trim().toUpperCase(),
-      pan_number: form.pan_number.trim().toUpperCase(),
-      address: form.address.trim(),
-      contact_person: form.contact_person.trim(),
-      contact_phone: form.contact_phone.trim(),
+      gst_number: form.gst_number.trim().toUpperCase() || null,
+      pan_number: form.pan_number.trim().toUpperCase() || null,
+      address: form.address.trim() || null,
+      contact_person: form.contact_person.trim() || null,
+      contact_phone: form.contact_phone.trim() || null,
       contact_email: form.contact_email.trim() || null,
       notes: form.notes.trim() || null,
     };
