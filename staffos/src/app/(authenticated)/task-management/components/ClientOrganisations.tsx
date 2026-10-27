@@ -334,7 +334,7 @@ export default function ClientOrganisations({ onClose, onOrgAdded, canManage, va
                       </div>
                       <div className="grid grid-cols-2 gap-3">
                         <div>
-                          {field('GST', true)}
+                          {field('GST', false)}
                           <div className="relative">
                             <Hash size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                             <input type="text" maxLength={15} placeholder="22AAAAA0000A1Z5" value={form.gst_number}
@@ -342,7 +342,7 @@ export default function ClientOrganisations({ onClose, onOrgAdded, canManage, va
                           </div>
                         </div>
                         <div>
-                          {field('PAN', true)}
+                          {field('PAN', false)}
                           <div className="relative">
                             <Hash size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                             <input type="text" maxLength={10} placeholder="AAAAA0000A" value={form.pan_number}
@@ -351,7 +351,7 @@ export default function ClientOrganisations({ onClose, onOrgAdded, canManage, va
                         </div>
                       </div>
                       <div>
-                        {field('Address', true)}
+                        {field('Address', false)}
                         <div className="relative">
                           <MapPin size={14} className="absolute left-3 top-3 text-slate-400" />
                           <textarea rows={2} placeholder="Full registered address" value={form.address}
@@ -360,7 +360,7 @@ export default function ClientOrganisations({ onClose, onOrgAdded, canManage, va
                       </div>
                       <div className="grid grid-cols-2 gap-3">
                         <div>
-                          {field('Contact Person', true)}
+                          {field('Contact Person', false)}
                           <div className="relative">
                             <User size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                             <input type="text" placeholder="Name" value={form.contact_person}
@@ -368,7 +368,7 @@ export default function ClientOrganisations({ onClose, onOrgAdded, canManage, va
                           </div>
                         </div>
                         <div>
-                          {field('Contact Number', true)}
+                          {field('Contact Number', false)}
                           <div className="relative">
                             <Phone size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                             <input type="tel" placeholder="+91 …" value={form.contact_phone}
