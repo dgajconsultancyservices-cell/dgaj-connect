@@ -6,6 +6,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { CalendarDays, Upload, FileText, X, CheckCircle2, Clock, AlertCircle, ChevronLeft, Loader2, Eye, Info } from 'lucide-react';
 import Link from 'next/link';
 import { toast, Toaster } from 'sonner';
+import { fetchSavedQuotas, quotaForRole, quotaValue, type RoleQuotas } from '@/lib/leaveQuotas';
 
 type LeaveType = 'substitute' | 'paid' | 'unpaid' | 'medical' | 'half_day';
 
@@ -23,8 +24,6 @@ interface FormState {
   is_half_day: boolean;
   half_day_period: string;
   certificate_file: File | null;
-  substitute_kind: '' | 'worked' | 'compensate';
-  substitute_work_date: string;
 }
 
 const leaveTypeConfig: Record<LeaveType, {
@@ -32,15 +31,14 @@ const leaveTypeConfig: Record<LeaveType, {
   color: string;
   bg: string;
   bar: string;
-  quota: number;
   requiresCertificate: boolean;
   description: string;
 }> = {
-  substitute: { label: 'Substitute Leave', color: 'text-blue-700',    bg: 'bg-blue-50',    bar: 'bg-blue-500',   quota: 12, requiresCertificate: false, description: 'Substitute / compensatory leave' },
-  paid:       { label: 'Paid Leave',        color: 'text-emerald-700', bg: 'bg-emerald-50', bar: 'bg-emerald-500',quota: 15, requiresCertificate: false, description: 'Earned paid time off' },
-  unpaid:     { label: 'Unpaid Leave',      color: 'text-slate-600',   bg: 'bg-slate-50',   bar: 'bg-slate-400',  quota: 0,  requiresCertificate: false, description: 'Leave without pay' },
-  medical:    { label: 'Medical Leave',     color: 'text-red-700',     bg: 'bg-red-50',     bar: 'bg-red-400',    quota: 8,  requiresCertificate: true,  description: 'Medical leave — doctor certificate required' },
-  half_day:   { label: 'Half Day',          color: 'text-amber-700',   bg: 'bg-amber-50',   bar: 'bg-amber-400',  quota: 10, requiresCertificate: false, description: 'Half day leave (morning or afternoon)' },
+  substitute: { label: 'Substitute Leave', color: 'text-blue-700 dark:text-blue-300',    bg: 'bg-blue-50 dark:bg-blue-900/30',    bar: 'bg-blue-500',   requiresCertificate: false, description: 'Substitute / compensatory leave' },
+  paid:       { label: 'Paid Leave',        color: 'text-emerald-700 dark:text-emerald-300', bg: 'bg-emerald-50 dark:bg-emerald-900/30', bar: 'bg-emerald-500',requiresCertificate: false, description: 'Earned paid time off' },
+  unpaid:     { label: 'Unpaid Leave',      color: 'text-slate-600 dark:text-slate-300',   bg: 'bg-slate-50 dark:bg-slate-700/40',   bar: 'bg-slate-400',  requiresCertificate: false, description: 'Leave without pay' },
+  medical:    { label: 'Medical Leave',     color: 'text-red-700 dark:text-red-300',     bg: 'bg-red-50 dark:bg-red-900/30',     bar: 'bg-red-400',    requiresCertificate: true,  description: 'Medical leave — doctor certificate required' },
+  half_day:   { label: 'Half Day',          color: 'text-amber-700 dark:text-amber-300',   bg: 'bg-amber-50 dark:bg-amber-900/30',   bar: 'bg-amber-400',  requiresCertificate: false, description: 'Half day leave (morning or afternoon)' },
 };
 
 function getFiscalYear(date: Date = new Date()): number {
@@ -72,17 +70,16 @@ const defaultForm: FormState = {
   is_half_day: false,
   half_day_period: 'morning',
   certificate_file: null,
-  substitute_kind: '',
-  substitute_work_date: '',
 };
 
 export default function LeaveRequestForm() {
-  const { user } = useAuth();
+  const { user, pinSession } = useAuth();
   const supabase = createClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [form, setForm] = useState<FormState>(defaultForm);
   const [balances, setBalances] = useState<LeaveBalance[]>([]);
+  const [quota, setQuota] = useState<RoleQuotas>({});
   const [loadingBalances, setLoadingBalances] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [uploadingCert, setUploadingCert] = useState(false);
@@ -90,48 +87,47 @@ export default function LeaveRequestForm() {
   const [currentFY] = useState<number>(getFiscalYear());
 
   const fetchBalances = useCallback(async () => {
-    if (!user) return;
+    const uid = user?.id || pinSession?.userId;
+    if (!uid) { setLoadingBalances(false); return; }
     setLoadingBalances(true);
     try {
       const fy = getFiscalYear();
+      // Entitlements come from Director Settings (per role), the same source the dashboard uses
+      const { data: profile } = await supabase.from('user_profiles').select('role').eq('id', uid).maybeSingle();
+      const roleQuota = quotaForRole(await fetchSavedQuotas(supabase), profile?.role);
+      setQuota(roleQuota);
 
-      // Entitlements come from Director Settings (per role), synced into leave_balances
-      const { data: profile } = await supabase.from('user_profiles').select('role').eq('id', user.id).maybeSingle();
-      const quota = quotaForRole(await fetchSavedQuotas(supabase), profile?.role);
-
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('leave_balances')
         .select('leave_type, total_days, used_days')
-        .eq('user_id', user.id)
+        .eq('user_id', uid)
         .eq('fiscal_year', fy);
 
-      // Create only the rows that are missing; existing totals are kept as synced
-      const leaveTypes: LeaveType[] = ['substitute', 'paid', 'medical'];
-      const missing = leaveTypes.filter((lt) => !(data || []).some((b: any) => b.leave_type === lt));
-      if (missing.length > 0) {
+      if (!error) {
+        // Sync total_days from the saved role quota; keep each person's used_days
+        const leaveTypes: LeaveType[] = ['substitute', 'paid', 'medical'];
         await supabase.from('leave_balances').upsert(
-          missing.map((lt) => ({
-            user_id: user.id,
+          leaveTypes.map((lt) => ({
+            user_id: uid,
             leave_type: lt,
             fiscal_year: fy,
-            total_days: quotaValue(quota, lt),
-            used_days: 0,
+            total_days: quotaValue(roleQuota, lt),
+            used_days: (data || []).find((b: any) => b.leave_type === lt)?.used_days ?? 0,
             carry_forward_days: 0,
           })),
-          { onConflict: 'user_id,leave_type,fiscal_year', ignoreDuplicates: true },
+          { onConflict: 'user_id,leave_type,fiscal_year', ignoreDuplicates: false },
         );
+        const { data: finalData } = await supabase
+          .from('leave_balances')
+          .select('leave_type, total_days, used_days')
+          .eq('user_id', uid)
+          .eq('fiscal_year', fy);
+        setBalances(finalData || []);
       }
-
-      const { data: finalData } = await supabase
-        .from('leave_balances')
-        .select('leave_type, total_days, used_days')
-        .eq('user_id', user.id)
-        .eq('fiscal_year', fy);
-      setBalances(finalData || []);
     } finally {
       setLoadingBalances(false);
     }
-  }, [user]);
+  }, [user, pinSession]);
 
   useEffect(() => {
     fetchBalances();
@@ -139,7 +135,8 @@ export default function LeaveRequestForm() {
 
   const getBalance = (type: LeaveType): { total: number; used: number; remaining: number } => {
     const found = balances.find((b) => b.leave_type === type);
-    const total = found?.total_days ?? leaveTypeConfig[type].quota;
+    // Director Settings is the source of truth for the total
+    const total = quotaValue(quota, type);
     const used = found?.used_days ?? 0;
     return { total, used, remaining: total - used };
   };
@@ -194,21 +191,6 @@ export default function LeaveRequestForm() {
       toast.error('Please provide a reason for your leave');
       return;
     }
-    if (form.leave_type === 'substitute') {
-      if (!form.substitute_kind || !form.substitute_work_date) {
-        toast.error('Select the weekend/holiday this substitute leave is for');
-        return;
-      }
-      const today = new Date().toISOString().split('T')[0];
-      if (form.substitute_kind === 'worked' && form.substitute_work_date > today) {
-        toast.error('A day you already worked cannot be in the future');
-        return;
-      }
-      if (form.substitute_kind === 'compensate' && form.substitute_work_date <= today) {
-        toast.error('Choose a future date for the day you will compensate');
-        return;
-      }
-    }
     if (selectedConfig.requiresCertificate && !form.certificate_file) {
       toast.error(`A doctor certificate is required for ${selectedConfig.label}`);
       return;
@@ -241,8 +223,6 @@ export default function LeaveRequestForm() {
         doctor_certificate_url: certUrl,
         doctor_certificate_path: certPath,
         status: 'pending',
-        substitute_kind: form.leave_type === 'substitute' ? form.substitute_kind : null,
-        substitute_work_date: form.leave_type === 'substitute' ? form.substitute_work_date : null,
       });
 
       if (error) throw error;
@@ -412,31 +392,6 @@ export default function LeaveRequestForm() {
               </div>
             )}
 
-            {/* Substitute: which weekend/holiday this leave is for */}
-            {form.leave_type === 'substitute' && (
-              <div className="p-4 bg-blue-50 border border-blue-200 rounded-xl space-y-3">
-                <p className="text-sm font-600 text-blue-800">Substitute leave is for a weekend or holiday</p>
-                <div className="grid grid-cols-2 gap-2">
-                  {([
-                    { id: 'worked', label: 'I worked on that day' },
-                    { id: 'compensate', label: 'I will compensate on that day' },
-                  ] as const).map((o) => (
-                    <button key={o.id} type="button"
-                      onClick={() => setForm((prev) => ({ ...prev, substitute_kind: o.id }))}
-                      className={`py-2 px-3 rounded-lg border text-xs font-600 transition-colors ${form.substitute_kind === o.id ? 'border-blue-500 bg-white text-blue-700' : 'border-blue-200 bg-blue-50/50 text-blue-700/80'}`}>
-                      {o.label}
-                    </button>
-                  ))}
-                </div>
-                <div>
-                  <label className="block text-xs font-600 text-slate-700 mb-1.5">Weekend / holiday date</label>
-                  <input type="date" value={form.substitute_work_date}
-                    onChange={(e) => setForm((prev) => ({ ...prev, substitute_work_date: e.target.value }))}
-                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-300" />
-                </div>
-              </div>
-            )}
-
             {/* Reason */}
             <div>
               <label className="block text-sm font-600 text-slate-700 mb-1.5">Reason</label>
@@ -514,9 +469,9 @@ export default function LeaveRequestForm() {
 
         {/* Leave Balance Sidebar */}
         <div className="space-y-4">
-          <div className="bg-white rounded-xl border border-slate-200 shadow-card p-5">
-            <h3 className="text-sm font-600 text-slate-900 mb-1">Leave Balance</h3>
-            <p className="text-xs text-slate-500 mb-4">FY {currentFY}–{currentFY + 1}</p>
+          <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-card p-5">
+            <h3 className="text-base font-600 text-slate-900 dark:text-slate-100">Leave Balance</h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 mb-4">FY {currentFY}–{currentFY + 1}</p>
 
             {loadingBalances ? (
               <div className="flex items-center justify-center py-6">
@@ -531,23 +486,23 @@ export default function LeaveRequestForm() {
                   const isLow = bal.remaining <= 1 && type !== 'unpaid';
                   const isSelected = form.leave_type === type;
                   return (
-                    <div key={type} className={`p-2.5 rounded-lg transition-colors ${isSelected ? `${cfg.bg} border border-current/10` : ''}`}>
-                      <div className="flex items-center justify-between mb-1">
-                        <span className={`text-xs font-500 ${isSelected ? cfg.color : 'text-slate-700'}`}>{cfg.label}</span>
+                    <div key={type} className={`rounded-lg p-3 ${cfg.bg} ${isSelected ? 'ring-2 ring-amber-300' : ''}`}>
+                      <div className="flex items-center justify-between mb-1.5">
+                        <span className={`text-xs font-600 ${cfg.color}`}>{cfg.label}</span>
                         <div className="flex items-center gap-1.5">
-                          {isLow && <span className="text-[10px] text-red-600 font-600 bg-red-50 px-1.5 py-0.5 rounded-full">Low</span>}
-                          <span className={`text-xs font-700 tabular-nums ${isLow ? 'text-red-600' : isSelected ? cfg.color : 'text-slate-700'}`}>
-                            {bal.remaining}
+                          {isLow && <span className="text-[10px] text-red-600 dark:text-red-300 font-600 bg-red-50 dark:bg-red-900/30 px-1.5 py-0.5 rounded-full">Low</span>}
+                          <span className="text-xs text-slate-500 dark:text-slate-400 tabular-nums">
+                            <span className={`font-700 ${isLow ? 'text-red-600 dark:text-red-300' : cfg.color}`}>{bal.remaining}</span>/{bal.total} days
                           </span>
-                          <span className="text-[11px] text-slate-400">/ {bal.total}</span>
                         </div>
                       </div>
-                      <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                      <div className="h-1.5 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
                         <div
                           className={`h-full rounded-full transition-all duration-500 ${cfg.bar}`}
                           style={{ width: `${pct}%` }}
                         />
                       </div>
+                      <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-1">{bal.used} used</p>
                     </div>
                   );
                 })}

@@ -85,23 +85,19 @@ export default function LeaveBalancePanel() {
         .order('leave_type');
 
       if (!error) {
-        // Upsert with admin-configured total_days so entitlement changes are reflected
-        // Only create rows that are missing; existing totals are kept as synced
+        // Sync total_days from the saved role quota; keep each person's used_days
         const leaveTypes = ['substitute', 'paid', 'medical'];
-        const missing = leaveTypes.filter((lt) => !(data || []).some((b: any) => b.leave_type === lt));
-        if (missing.length > 0) {
-          await supabase.from('leave_balances').upsert(
-            missing.map((lt) => ({
-              user_id: uid,
-              leave_type: lt,
-              fiscal_year: fiscalYear,
-              total_days: quotaValue(quota, lt),
-              used_days: 0,
-              carry_forward_days: 0,
-            })),
-            { onConflict: 'user_id,leave_type,fiscal_year', ignoreDuplicates: true },
-          );
-        }
+        await supabase.from('leave_balances').upsert(
+          leaveTypes.map((lt) => ({
+            user_id: uid,
+            leave_type: lt,
+            fiscal_year: fiscalYear,
+            total_days: quotaValue(quota, lt),
+            used_days: (data || []).find((b: any) => b.leave_type === lt)?.used_days ?? 0,
+            carry_forward_days: 0,
+          })),
+          { onConflict: 'user_id,leave_type,fiscal_year', ignoreDuplicates: false },
+        );
 
         const { data: finalData } = await supabase
           .from('leave_balances')
