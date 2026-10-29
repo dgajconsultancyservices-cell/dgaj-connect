@@ -38,7 +38,8 @@ interface ReportData {
   fuels: FuelRow[];
   tanks: Tank[];
   sales: { cash: string; upi: string };  // upi is used by hospital reports only
-  cashInHand: string;
+  openingCash: string;    // cash in hand at the start of the day
+  cashInHand: string;     // legacy field from older saved days (not used for new entries)
   portalBalance: string;  // portal balance for the day (fuel reports)
   expenses: Expense[];
 }
@@ -95,6 +96,7 @@ function emptyReport(): ReportData {
       { id: uid(), name: 'Tank 4', fuel: 'xp95', dip: '', ltr: '' },
     ],
     sales: { cash: '', upi: '' },
+    openingCash: '',
     cashInHand: '',
     portalBalance: '',
     expenses: [],
@@ -110,6 +112,7 @@ function normalize(raw: any): ReportData {
     fuels: raw.fuels?.length ? raw.fuels.map((f: any) => ({ price: '', costPrice: '', ...f })) : base.fuels,
     tanks: raw.tanks ?? base.tanks,
     sales: { cash: raw.sales?.cash ?? '', upi: raw.sales?.upi ?? '' },
+    openingCash: raw.openingCash ?? '',
     cashInHand: raw.cashInHand ?? '',
     portalBalance: raw.portalBalance ?? '',
     expenses: (raw.expenses ?? []).map((e: any) => ({
@@ -126,6 +129,8 @@ function normalize(raw: any): ReportData {
 }
 
 function summarize(d: ReportData) {
+  // Closing cash = opening cash + cash sale
+  const closingCash = num(d.openingCash) + num(d.sales.cash);
   const fuelRows = d.fuels.map((f) => {
     const litres = num(f.daySales);
     return { name: f.name || '—', litres, revenue: litres * num(f.price) };
@@ -138,10 +143,11 @@ function summarize(d: ReportData) {
     cashSale: num(d.sales.cash),
     upiSale: num(d.sales.upi),
     hospitalTotal: num(d.sales.cash) + num(d.sales.upi),
-    cashInHand: num(d.cashInHand),
+    openingCash: num(d.openingCash),
+    cashInHand: closingCash,
     portalBalance: num(d.portalBalance),
     // Capital = cash in hand + portal balance + (total stock × cost price) for each fuel
-    capital: num(d.cashInHand) + num(d.portalBalance)
+    capital: closingCash + num(d.portalBalance)
       + d.fuels.reduce((s, f) => s + num(f.totalStock) * num(f.costPrice), 0),
     paid: expPaid,
     cashPaid: d.expenses.filter((e) => e.mode === 'cash').reduce((s, e) => s + num(e.amount), 0),
@@ -272,6 +278,8 @@ export default function DailyReportPage() {
   const [updaterName, setUpdaterName] = useState('');
   const [defaultPerson, setDefaultPerson] = useState('');
   const [dayRows, setDayRows] = useState<DayRow[]>([]);
+  // Tank capacity (litres) per tank name, saved once per firm
+  const [tankCaps, setTankCaps] = useState<Record<string, string>>({});
 
   const [rates, setRates] = useState<RateRow[]>([]);
   const [ratesKey, setRatesKey] = useState(0);
@@ -399,6 +407,20 @@ export default function DailyReportPage() {
       });
   }, [firmId, isAll, ratesKey]);
 
+  // Tank capacities for this firm (saved once per firm, keyed by tank name)
+  useEffect(() => {
+    if (!firmId || isAll) { setTankCaps({}); return; }
+    supabase.from('daily_report_tank_capacity')
+      .select('tank_name, capacity_litres')
+      .eq('firm_id', firmId)
+      .then(({ data: rows, error }) => {
+        if (error) { toast.error('Could not load tank capacities'); return; }
+        const m: Record<string, string> = {};
+        (rows || []).forEach((r: { tank_name: string; capacity_litres: number }) => { m[r.tank_name] = String(r.capacity_litres); });
+        setTankCaps(m);
+      });
+  }, [firmId, isAll]);
+
   // Load one firm's report for the selected day
   useEffect(() => {
     if (!firmId || isAll) return;
@@ -473,9 +495,9 @@ export default function DailyReportPage() {
   const { trendRows, fuelNames, tankNames } = useMemo(() => {
     const names: string[] = [];
     const tankNames: string[] = [];
-    type Agg = { cashSale: number; upi: number; paid: number; cashByDate: Map<string, number>; tankByDate: Map<string, Record<string, number>>; rev: Record<string, number>; lit: Record<string, number> };
+    type Agg = { cashSale: number; upi: number; paid: number; openByDate: Map<string, number>; cashByDate: Map<string, number>; tankByDate: Map<string, Record<string, number>>; rev: Record<string, number>; lit: Record<string, number> };
     const aggs = new Map<string, Agg>();
-    windowBuckets.forEach((b) => aggs.set(b.key, { cashSale: 0, upi: 0, paid: 0, cashByDate: new Map(), tankByDate: new Map(), rev: {}, lit: {} }));
+    windowBuckets.forEach((b) => aggs.set(b.key, { cashSale: 0, upi: 0, paid: 0, cashByDate: new Map(), openByDate: new Map(), tankByDate: new Map(), rev: {}, lit: {} }));
 
     history.forEach((row) => {
       const key = keyFor(row.report_date, period, customMonthly);
@@ -500,6 +522,7 @@ export default function DailyReportPage() {
       a.upi += s.upiSale;
       a.paid += s.paid;
       a.cashByDate.set(row.report_date, (a.cashByDate.get(row.report_date) || 0) + s.cashInHand);
+      a.openByDate.set(row.report_date, (a.openByDate.get(row.report_date) || 0) + s.openingCash);
       s.fuelRows.forEach((r) => {
         if (!names.includes(r.name)) names.push(r.name);
         a.rev[r.name] = (a.rev[r.name] || 0) + r.revenue;
@@ -518,6 +541,8 @@ export default function DailyReportPage() {
         upiSale: a.upi,
         // closing cash = cash in hand on the latest saved day in the bucket (summed across firms in all-firms view)
         cashInHand: latest ? a.cashByDate.get(latest) || 0 : 0,
+        // opening cash = opening on the earliest saved day in the bucket
+        openingCash: (() => { const first = Array.from(a.openByDate.keys()).sort()[0]; return first ? a.openByDate.get(first) || 0 : 0; })(),
         expensesPaid: a.paid,
       };
       // Tank stock: latest saved day in the bucket
@@ -549,6 +574,16 @@ export default function DailyReportPage() {
     if (error) {
       toast.error(`Save failed: ${error.message}`);
       return;
+    }
+    // Save tank capacities for this firm (only tanks with a name and a capacity)
+    const capRows = data.tanks
+      .filter((t) => t.name.trim() && (tankCaps[t.name] ?? '').trim() !== '')
+      .map((t) => ({ firm_id: firmId, tank_name: t.name.trim(), capacity_litres: num(tankCaps[t.name]), updated_by: updaterName || null }));
+    if (capRows.length > 0) {
+      const { error: capErr } = await supabase
+        .from('daily_report_tank_capacity')
+        .upsert(capRows, { onConflict: 'firm_id,tank_name' });
+      if (capErr) toast.error(`Tank capacity not saved: ${capErr.message}`);
     }
     setMeta({ by: updaterName || null, at: new Date().toISOString() });
     toast.success('Daily report saved');
@@ -615,6 +650,9 @@ export default function DailyReportPage() {
   const setExpense = (id: string, patch: Partial<Expense>) =>
     setData((d) => ({ ...d, expenses: d.expenses.map((e) => (e.id === id ? { ...e, ...patch } : e)) }));
 
+  // Empty capacity = tank capacity - ltr stock
+  const tankEmpty = (t: Tank) => num(tankCaps[t.name]) - num(t.ltr);
+
   const fuelOptions = liveData.fuels.map((f) => <option key={f.id} value={f.id}>{f.name || '—'}</option>);
 
   // ----- Empty / loading states -----
@@ -667,14 +705,16 @@ export default function DailyReportPage() {
       { label: 'Total Sales Today', value: fmtMoney(totals.hospitalTotal), sub: 'Cash + UPI' },
       { label: 'Cash Sales', value: fmtMoney(totals.cashSale), sub: 'Cash' },
       { label: 'UPI Sales', value: fmtMoney(totals.upiSale), sub: 'UPI' },
-      { label: 'Cash in Hand', value: fmtMoney(totals.cashInHand), sub: 'End of day' },
+      { label: 'Opening Cash', value: fmtMoney(totals.openingCash), sub: 'Start of day' },
+      { label: 'Closing Cash', value: fmtMoney(totals.cashInHand), sub: 'Opening + cash sale' },
       { label: 'Expenses Paid', value: fmtMoney(totals.paid), sub: `Cash ${fmtMoney(totals.cashPaid)} · Online ${fmtMoney(totals.onlinePaid)}` },
     ]
     : [
       { label: 'Capital', value: fmtMoney(totals.capital), sub: 'Cash + portal + stock at cost' },
       { label: 'Revenue Today', value: fmtMoney(totals.revenue), sub: `${fmtNum(totals.litres)} L sold` },
       { label: 'Cash Sale Today', value: fmtMoney(totals.cashSale), sub: 'Cash only' },
-      { label: 'Cash in Hand', value: fmtMoney(totals.cashInHand), sub: 'End of day' },
+      { label: 'Opening Cash', value: fmtMoney(totals.openingCash), sub: 'Start of day' },
+      { label: 'Closing Cash', value: fmtMoney(totals.cashInHand), sub: 'Opening + cash sale' },
       { label: 'Expenses Paid', value: fmtMoney(totals.paid), sub: `Cash ${fmtMoney(totals.cashPaid)} · Online ${fmtMoney(totals.onlinePaid)}` },
       { label: 'Balance to Pay', value: fmtMoney(totals.balance), sub: `Total to pay ${fmtMoney(totals.toPay)}` },
     ];
@@ -768,7 +808,7 @@ export default function DailyReportPage() {
             </p>
           )}
 
-          <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+          <div className={`grid grid-cols-2 gap-4 ${isHospitalSingle ? 'md:grid-cols-3 xl:grid-cols-6' : 'md:grid-cols-4 xl:grid-cols-7'}`}>
             {tiles.map((t) => (
               <div key={t.label} className={cardCls + ' p-4'}>
                 <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">{t.label}</p>
@@ -850,14 +890,18 @@ export default function DailyReportPage() {
               <div className={cardCls + ' p-4 space-y-3'}>
                 <h2 className="text-sm font-semibold text-slate-800 dark:text-slate-100">Cash</h2>
                 <div className="grid grid-cols-2 items-center gap-3">
-                  <label className="text-xs font-semibold text-slate-600 dark:text-slate-400">Cash sale for the day (₹)</label>
+                  <label className="text-xs font-semibold text-slate-600 dark:text-slate-400">1. Opening cash in hand (₹)</label>
+                  <input type="number" step="0.01" className={inputCls} value={data.openingCash}
+                    onChange={(e) => setData((d) => ({ ...d, openingCash: e.target.value }))} />
+                </div>
+                <div className="grid grid-cols-2 items-center gap-3">
+                  <label className="text-xs font-semibold text-slate-600 dark:text-slate-400">2. Cash sale for the day (₹)</label>
                   <input type="number" step="0.01" className={inputCls} value={data.sales.cash}
                     onChange={(e) => setData((d) => ({ ...d, sales: { ...d.sales, cash: e.target.value } }))} />
                 </div>
-                <div className="grid grid-cols-2 items-center gap-3">
-                  <label className="text-xs font-semibold text-slate-600 dark:text-slate-400">Cash in hand for the day (₹)</label>
-                  <input type="number" step="0.01" className={inputCls} value={data.cashInHand}
-                    onChange={(e) => setData((d) => ({ ...d, cashInHand: e.target.value }))} />
+                <div className="grid grid-cols-2 items-center gap-3 pt-2 border-t border-slate-200 dark:border-slate-700">
+                  <label className="text-xs font-semibold text-slate-800 dark:text-slate-100">3. Closing cash in hand (1 + 2) (₹)</label>
+                  <div className={inputCls + ' font-bold tabular-nums bg-slate-50 dark:bg-slate-700/50'}>{fmtNum(totals.cashInHand)}</div>
                 </div>
               </div>
 
@@ -945,9 +989,9 @@ export default function DailyReportPage() {
                   className="flex items-center gap-1 text-xs font-semibold text-blue-600 hover:text-blue-700"><Plus size={13} /> Add tank</button>
               </div>
               <div className="overflow-x-auto">
-                <table className="w-full text-sm min-w-[480px]">
+                <table className="w-full text-sm min-w-[760px]">
                   <thead>
-                    <tr>{['Tank', 'Fuel', 'Dip reading (ft)', 'Ltr stock', ''].map((h, i) => <th key={i} className={thCls}>{h}</th>)}</tr>
+                    <tr>{['Tank', 'Fuel', 'Dip reading (ft)', 'Ltr stock', 'Tank capacity (L)', 'Empty capacity (L)', ''].map((h, i) => <th key={i} className={thCls}>{h}</th>)}</tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
                     {data.tanks.map((t) => (
@@ -958,6 +1002,13 @@ export default function DailyReportPage() {
                         </td>
                         <td className={tdCls}><input type="number" step="0.01" className={inputCls} value={t.dip} onChange={(e) => setTank(t.id, { dip: e.target.value })} /></td>
                         <td className={tdCls}><input type="number" step="0.01" className={inputCls} value={t.ltr} onChange={(e) => setTank(t.id, { ltr: e.target.value })} /></td>
+                        <td className={tdCls}>
+                          <input type="number" step="0.01" min="0" className={inputCls} value={tankCaps[t.name] ?? ''} disabled={!t.name.trim() || isAll}
+                            onChange={(e) => setTankCaps((c) => ({ ...c, [t.name]: e.target.value }))} />
+                        </td>
+                        <td className={tdCls + ' text-right tabular-nums font-semibold ' + (tankCaps[t.name] ? (tankEmpty(t) < 0 ? 'text-red-600' : 'text-emerald-600') : 'text-slate-400')}>
+                          {tankCaps[t.name] ? fmtNum(tankEmpty(t)) : '—'}
+                        </td>
                         <td className={tdCls}>
                           <button onClick={() => setData((d) => ({ ...d, tanks: d.tanks.filter((x) => x.id !== t.id) }))} className="text-slate-400 hover:text-red-600"><Trash2 size={14} /></button>
                         </td>
@@ -989,9 +1040,13 @@ export default function DailyReportPage() {
                 <p className="text-sm font-bold tabular-nums text-slate-900 dark:text-slate-100">{fmtMoney(totals.hospitalTotal)}</p>
               </div>
               <div className="grid grid-cols-2 items-center gap-3">
-                <label className="text-xs font-semibold text-slate-600 dark:text-slate-400">Cash in hand for the day (₹)</label>
-                <input type="number" step="0.01" className={inputCls} value={data.cashInHand}
-                  onChange={(e) => setData((d) => ({ ...d, cashInHand: e.target.value }))} />
+                <label className="text-xs font-semibold text-slate-600 dark:text-slate-400">Opening cash in hand (₹)</label>
+                <input type="number" step="0.01" className={inputCls} value={data.openingCash}
+                  onChange={(e) => setData((d) => ({ ...d, openingCash: e.target.value }))} />
+              </div>
+              <div className="grid grid-cols-2 items-center gap-3 pt-2 border-t border-slate-200 dark:border-slate-700">
+                <label className="text-xs font-semibold text-slate-800 dark:text-slate-100">Closing cash in hand (opening + cash sales) (₹)</label>
+                <div className={inputCls + ' font-bold tabular-nums bg-slate-50 dark:bg-slate-700/50'}>{fmtNum(totals.cashInHand)}</div>
               </div>
             </div>
           )}
@@ -1189,17 +1244,18 @@ export default function DailyReportPage() {
               </>) : (<>
                 <div className="grid grid-cols-1 gap-6">
                   <div>
-                    <p className="text-xs font-semibold text-slate-600 dark:text-slate-400 mb-2">Cash sales and cash in hand (bars)</p>
+                    <p className="text-xs font-semibold text-slate-600 dark:text-slate-400 mb-2">Opening cash and cash sale (bars), closing cash (line)</p>
                     <ResponsiveContainer width="100%" height={260}>
-                      <BarChart data={trendRows} margin={{ top: 8, right: 8, left: 0, bottom: 0 }} barGap={0} barCategoryGap="15%">
+                      <ComposedChart data={trendRows} margin={{ top: 8, right: 8, left: 0, bottom: 0 }} barGap={0} barCategoryGap="15%">
                         <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                         <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#64748b' }} axisLine={false} tickLine={false} interval={xInterval} angle={-45} textAnchor="end" height={64} />
                         <YAxis tick={{ fontSize: 11, fill: '#64748b' }} axisLine={false} tickLine={false} tickFormatter={(v) => `₹${Number(v) >= 1000 ? (Number(v) / 1000).toFixed(0) + 'k' : v}`} />
                         <Tooltip formatter={(v: number) => fmtMoney(v)} contentStyle={{ fontSize: 12, borderRadius: 8 }} />
                         <Legend wrapperStyle={{ fontSize: 12 }} />
+                        <Bar dataKey="openingCash" name="Opening cash" fill="#6366f1" radius={[3, 3, 0, 0]} maxBarSize={40} />
                         <Bar dataKey="cashSale" name="Cash sale" fill="#10b981" radius={[3, 3, 0, 0]} maxBarSize={40} />
-                        <Bar dataKey="cashInHand" name="Cash in hand" fill="#8b5cf6" radius={[3, 3, 0, 0]} maxBarSize={40} />
-                      </BarChart>
+                        <Line type="monotone" dataKey="cashInHand" name="Closing cash" stroke="#8b5cf6" strokeWidth={2} dot={{ r: 3 }} />
+                      </ComposedChart>
                     </ResponsiveContainer>
                   </div>
                   <div>
