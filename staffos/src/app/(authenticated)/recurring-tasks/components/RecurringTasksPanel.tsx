@@ -113,6 +113,10 @@ export default function RecurringTasksPanel() {
   const [instanceStatusFilter, setInstanceStatusFilter] = useState<'all' | InstanceStatus>('all');
   const [instanceScope, setInstanceScope] = useState<'mine' | 'all'>('mine');
   const [search, setSearch] = useState('');
+  const [firmFilter, setFirmFilter] = useState<'all' | string>('all');
+  const [employeeFilter, setEmployeeFilter] = useState<'all' | string>('all');
+  const [clientFilter, setClientFilter] = useState<'all' | string>('all');
+  const [priorityFilter, setPriorityFilter] = useState<'all' | Priority>('all');
   const [firmOptions, setFirmOptions] = useState<FirmOption[]>([]);
   const [clientOrgs, setClientOrgs] = useState<ClientOption[]>([]);
 
@@ -400,10 +404,46 @@ export default function RecurringTasksPanel() {
   };
 
   const filteredTemplates = useMemo(() => {
-    if (!search.trim()) return templates;
+    let list = templates;
+    if (firmFilter !== 'all') list = list.filter((t) => t.firm_id === firmFilter || (t.firm_ids || []).includes(firmFilter));
+    if (employeeFilter !== 'all') list = list.filter((t) => (t.assigned_to_users || []).includes(employeeFilter));
+    if (clientFilter !== 'all') list = list.filter((t) => t.client_org_id === clientFilter);
+    if (priorityFilter !== 'all') list = list.filter((t) => t.priority === priorityFilter);
+    if (!search.trim()) return list;
     const q = search.toLowerCase();
-    return templates.filter((t) => t.title.toLowerCase().includes(q) || (t.department || '').toLowerCase().includes(q));
-  }, [templates, search]);
+    return list.filter((t) => t.title.toLowerCase().includes(q) || (t.department || '').toLowerCase().includes(q));
+  }, [templates, search, firmFilter, employeeFilter, clientFilter, priorityFilter]);
+
+  const filteredInstances = useMemo(() => {
+    const templateById = new Map(templates.map((t) => [t.id, t]));
+    return instances.filter((i) => {
+      if (firmFilter !== 'all' && (i as { firm_id?: string | null }).firm_id !== firmFilter) return false;
+      if (employeeFilter !== 'all' && i.assigned_to !== employeeFilter) return false;
+      if (clientFilter !== 'all' && templateById.get(i.recurring_task_id)?.client_org_id !== clientFilter) return false;
+      if (priorityFilter !== 'all' && i.priority !== priorityFilter) return false;
+      return true;
+    });
+  }, [instances, templates, firmFilter, employeeFilter, clientFilter, priorityFilter]);
+
+  const selectBox = (value: string, onChange: (v: string) => void, allLabel: string, options: { value: string; label: string }[]) => (
+    <div className="relative">
+      <select value={value} onChange={(e) => onChange(e.target.value)} className="input-field pr-8 appearance-none cursor-pointer text-xs py-1.5">
+        <option value="all">{allLabel}</option>
+        {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+      </select>
+      <ChevronDown size={12} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+    </div>
+  );
+
+  const filterSelects = (
+    <>
+      {selectBox(firmFilter, setFirmFilter, 'All firms', firmOptions.map((f) => ({ value: f.id, label: f.name })))}
+      {selectBox(employeeFilter, setEmployeeFilter, 'All employees', allUsers.map((u) => ({ value: u.id, label: u.full_name })))}
+      {selectBox(clientFilter, setClientFilter, 'All clients', clientOrgs.map((c) => ({ value: c.id, label: c.name })))}
+      {selectBox(priorityFilter, (v) => setPriorityFilter(v as 'all' | Priority), 'All priorities',
+        (Object.keys(PRIORITY_STYLE) as Priority[]).map((p) => ({ value: p, label: p.charAt(0).toUpperCase() + p.slice(1) })))}
+    </>
+  );
 
   const userName = (id: string) => allUsers.find((u) => u.id === id)?.full_name || 'Unknown';
 
@@ -450,7 +490,7 @@ export default function RecurringTasksPanel() {
           onClick={() => setTab('instances')}
           className={`px-4 py-2.5 text-sm font-600 border-b-2 transition-colors ${tab === 'instances' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
         >
-          Scheduled occurrences ({instances.length})
+          Scheduled occurrences ({filteredInstances.length})
         </button>
       </div>
 
@@ -461,6 +501,10 @@ export default function RecurringTasksPanel() {
           <div className="relative mb-4 max-w-sm">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
             <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search templates…" className="input-field pl-8" />
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 mb-4">
+            {filterSelects}
           </div>
 
           {filteredTemplates.length === 0 ? (
@@ -520,6 +564,7 @@ export default function RecurringTasksPanel() {
                 <button onClick={() => setInstanceScope('all')} className={`px-3 py-1.5 ${instanceScope === 'all' ? 'bg-blue-600 text-white' : 'bg-white dark:bg-slate-700 text-slate-600 dark:text-slate-300'}`}>Everyone</button>
               </div>
             )}
+            {filterSelects}
             <div className="relative">
               <select value={instanceStatusFilter} onChange={(e) => setInstanceStatusFilter(e.target.value as any)} className="input-field pr-8 appearance-none cursor-pointer text-xs py-1.5">
                 <option value="all">All statuses</option>
@@ -529,13 +574,13 @@ export default function RecurringTasksPanel() {
             </div>
           </div>
 
-          {instances.length === 0 ? (
+          {filteredInstances.length === 0 ? (
             <div className="py-16 text-center text-slate-400 text-sm border border-dashed border-slate-200 dark:border-slate-700 rounded-2xl">
               No scheduled occurrences match this filter.
             </div>
           ) : (
             <div className="space-y-2">
-              {instances.map((inst) => {
+              {filteredInstances.map((inst) => {
                 const s = STATUS_STYLE[inst.status];
                 const StatusIcon = s.icon;
                 const mine = inst.assigned_to === effectiveUserId;
