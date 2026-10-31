@@ -39,7 +39,7 @@ const navItems: NavItem[] = [
   { id: 'nav-recurring-tasks', label: 'Recurring Tasks', icon: Repeat, href: '/recurring-tasks', group: 'tasks' },
   { id: 'nav-task-analytics', label: 'Task Analytics', icon: PieChart, href: '/task-analytics', group: 'tasks', managerOnly: true },
   
-  { id: 'nav-task-management', label: 'Task Management', icon: ListTodo, href: '/task-management', group: 'tasks', directorOrManagerOnly: true },
+  // { id: 'nav-task-management', label: 'Task Management', icon: ListTodo, href: '/task-management', group: 'tasks', directorOrManagerOnly: true },
 
   { id: 'nav-calendar', label: 'Calendar', icon: CalendarDays, href: '/calendar', group: 'collaborate' },
   { id: 'nav-chat', label: 'Chat', icon: MessageSquare, href: '/chat', group: 'collaborate' },

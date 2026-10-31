@@ -918,6 +918,12 @@ function normStatus(t: any): TaskStatus {
   return legacy || modern || 'not_started';
 }
 
+// "2026-11" -> "November 2026"
+function monthLabel(key: string): string {
+  const [y, m] = key.split('-').map(Number);
+  return new Date(y, (m || 1) - 1, 1).toLocaleString('en-IN', { month: 'long', year: 'numeric' });
+}
+
 function bucketOf(r: Row, today: string): Bucket {
   if (r.status === 'completed') return 'done';
   if (!r.due_date) return 'nodate';
@@ -1225,7 +1231,7 @@ function TaskRow({
                 </div>
               )}
 
-              {canDelete && row.source === 'task' && (
+              {canDelete && (row.source === 'task' || row.source === 'instance') && (
                 <div>
                   <button
                     onClick={onDelete}
@@ -1610,6 +1616,16 @@ export default function TasksHub() {
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('all');
   const [quick, setQuick] = useState<Quick>('none');
   const [search, setSearch] = useState('');
+  // The search text is also sent to the database, so it finds occurrences outside the loaded window
+  const [serverSearch, setServerSearch] = useState('');
+  // Month groups for "Later": current month open by default, other months collapsed
+  const [openMonths, setOpenMonths] = useState<Record<string, boolean>>({});
+  // Overdue / Today / Tomorrow / This week sections: expanded by default, click the header to collapse
+  const [closedSections, setClosedSections] = useState<Record<string, boolean>>({});
+  useEffect(() => {
+    const t = setTimeout(() => setServerSearch(search.trim()), 350);
+    return () => clearTimeout(t);
+  }, [search]);
   const [showFilters, setShowFilters] = useState(false);
   const [statusF, setStatusF] = useState('all');
   const [priorityF, setPriorityF] = useState('all');
@@ -1727,11 +1743,21 @@ export default function TasksHub() {
 
       // Recurring instances (separate table). Employees: their own. Directors: everyone.
       // Managers: people in the firms they can see (sharing rule).
+      // Window: 30 days back to 90 days ahead. The table holds tens of thousands of occurrences,
+      // so loading everything would hide the ones that matter today.
+      const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      const winFrom = ymd(new Date(Date.now() - 30 * 86400000));
+      // Six months ahead, so the month groups can show the next six months
+      const winTo = ymd(new Date(Date.now() + 190 * 86400000));
       let riQuery: any = supabase
         .from('recurring_task_instances')
-        .select('*, recurring_tasks(title, frequency)')
-        .order('due_date', { ascending: false })
-        .limit(500);
+        .select('*, recurring_tasks(title, frequency, description)')
+        // Oldest first, so the nearest dates are never cut off by the row limit
+        .order('due_date', { ascending: true })
+        .limit(5000);
+      // A search runs against the whole table; without one, only the window is loaded
+      if (serverSearch) riQuery = riQuery.ilike('task_name', `%${serverSearch}%`);
+      else riQuery = riQuery.gte('due_date', winFrom).lte('due_date', winTo);
       if (!canToggleScope || scope === 'mine') {
         riQuery = riQuery.eq('assigned_to', uid);
       } else if (!isDirector) {
@@ -1750,7 +1776,7 @@ export default function TasksHub() {
     } finally {
       setLoading(false);
     }
-  }, [uid, role, scope, canToggleScope, isDirector, supabase]);
+  }, [uid, role, scope, canToggleScope, isDirector, supabase, serverSearch]);
 
   useEffect(() => { loadTasks(); }, [loadTasks]);
 
@@ -1766,7 +1792,7 @@ export default function TasksHub() {
       return {
         key: `instance-${t.id}`, id: t.id, source: 'instance',
         title: t.task_name || t.recurring_tasks?.title || 'Recurring task',
-        description: '', status: st as TaskStatus,
+        description: t.recurring_tasks?.description || '', status: st as TaskStatus,
         priority: (['critical', 'high', 'medium', 'low'].includes(t.priority) ? t.priority : 'medium') as Priority,
         due_date: t.due_date || null, due_time: t.due_time || null,
         assignee: userMap[t.assigned_to] || userName || 'Me', assigneeNames: [userMap[t.assigned_to] || userName || 'Me'],
@@ -1913,6 +1939,18 @@ export default function TasksHub() {
     return g;
   }, [visible, today]);
 
+  // "Later" tasks grouped by due month, earliest month first
+  const monthGroups = useMemo(() => {
+    const m = new Map<string, Row[]>();
+    grouped.later.forEach(r => {
+      const k = (r.due_date || '').slice(0, 7);
+      if (!m.has(k)) m.set(k, []);
+      m.get(k)!.push(r);
+    });
+    return Array.from(m.entries()).sort(([a], [b]) => a.localeCompare(b));
+  }, [grouped]);
+  const currentMonth = today.slice(0, 7);
+
   const categoryOptions = useMemo(() => Array.from(new Set(rows.map(r => r.category).filter(Boolean))).sort(), [rows]);
   const clientOptions = useMemo(() => Array.from(new Set(rows.map(r => r.client).filter(Boolean))).sort(), [rows]);
   const assigneeOptions = useMemo(() => Array.from(new Set(firmRows.flatMap(r => r.assigneeNames))).sort(), [firmRows]);
@@ -2025,13 +2063,14 @@ export default function TasksHub() {
 
   // Directors and managers only (permission is also checked in the UI; RLS allows any signed-in delete today)
   const deleteTask = async (row: Row) => {
-    if (row.source !== 'task') return;
-    if (!window.confirm(`Delete "${row.title}"? This cannot be undone.`)) return;
+    const isOccurrence = row.source === 'instance';
+    if (!window.confirm(`Delete "${row.title}"${isOccurrence ? ' (this occurrence only)' : ''}? This cannot be undone.`)) return;
     setBusyKey(row.key);
     try {
-      const { error } = await supabase.from('tasks').delete().eq('id', row.id);
+      // A recurring occurrence deletes only that one date; the template and its other dates stay
+      const { error } = await supabase.from(isOccurrence ? 'recurring_task_instances' : 'tasks').delete().eq('id', row.id);
       if (error) throw error;
-      setRawTasks(prev => prev.filter(r => !(r.__source === 'task' && r.id === row.id)));
+      setRawTasks(prev => prev.filter(r => !((r.__source === 'task' || r.__source === 'instance') && r.id === row.id)));
       setExpanded(null);
       toast.success('Task deleted');
     } catch (err: any) {
@@ -2248,22 +2287,67 @@ export default function TasksHub() {
                 </tr>
               </thead>
               <tbody>
-                {SECTIONS.map(sec => {
+                {SECTIONS.filter(sec => sec.key !== 'later').map(sec => {
                   const items = grouped[sec.key];
                   if (items.length === 0) return null;
                   const Icon = sec.icon;
+                  const closed = !!closedSections[sec.key];
                   return (
                     <React.Fragment key={sec.key}>
                       <tr>
                         <td colSpan={7} className="pt-6 pb-2">
-                          <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setClosedSections(p => ({ ...p, [sec.key]: !closed }))}
+                            className="flex items-center gap-2 text-left"
+                          >
+                            <ChevronDown size={14} className={`text-slate-500 transition-transform ${closed ? '-rotate-90' : ''}`} />
                             <Icon size={14} className={sec.head} />
                             <span className={`text-sm font-bold ${sec.head}`}>{sec.label}</span>
                             <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${sec.badge}`}>{items.length}</span>
-                          </div>
+                          </button>
                         </td>
                       </tr>
-                      {items.map(r => (
+                      {!closed && items.map(r => (
+                        <TaskRow
+                          key={r.key} row={r} today={today}
+                          expanded={expanded === r.key}
+                          busy={busyKey === r.key}
+                          showAssignee={effectiveScope === 'all'}
+                          firm={r.firm_id ? firmById[r.firm_id] : null}
+                          canDelete={canDelete}
+                          candidates={users.filter(u => u.id !== uid)}
+                          onToggle={() => setExpanded(expanded === r.key ? null : r.key)}
+                          onComplete={() => changeStatus(r, r.status === 'completed' ? 'not_started' : 'completed')}
+                          onStatus={s => changeStatus(r, s)}
+                          onDelete={() => deleteTask(r)}
+                          onDuplicate={() => duplicateTask(r)}
+                          onRequest={userId => requestCollaborator(r, userId)}
+                          onRespond={accept => respondInvite(r, accept)}
+                        />
+                      ))}
+                    </React.Fragment>
+                  );
+                })}
+                {monthGroups.map(([mk, items]) => {
+                  const isOpen = openMonths[mk] ?? mk === currentMonth;
+                  return (
+                    <React.Fragment key={`m-${mk}`}>
+                      <tr>
+                        <td colSpan={8} className="pt-6 pb-2">
+                          <button
+                            type="button"
+                            onClick={() => setOpenMonths(p => ({ ...p, [mk]: !isOpen }))}
+                            className="flex items-center gap-2 text-left"
+                          >
+                            <ChevronDown size={14} className={`text-slate-500 transition-transform ${isOpen ? '' : '-rotate-90'}`} />
+                            <CalendarDays size={14} className="text-slate-600 dark:text-slate-300" />
+                            <span className="text-sm font-bold text-slate-800 dark:text-slate-200">{monthLabel(mk)}</span>
+                            <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300">{items.length}</span>
+                          </button>
+                        </td>
+                      </tr>
+                      {isOpen && items.map(r => (
                         <TaskRow
                           key={r.key} row={r} today={today}
                           expanded={expanded === r.key}

@@ -164,10 +164,14 @@ export default function RecurringTasksPanel() {
     if (instanceStatusFilter !== 'all') {
       query = query.eq('status', instanceStatusFilter);
     }
+    // Filters run in the database, before the row limit, so every matching occurrence can be reached
+    if (priorityFilter !== 'all') query = query.eq('priority', priorityFilter);
+    if (firmFilter !== 'all') query = query.eq('firm_id', firmFilter);
+    if (employeeFilter !== 'all') query = query.eq('assigned_to', employeeFilter);
     const { data, error } = await query;
     if (error) { console.error(error); return; }
     setInstances((data as any) || []);
-  }, [effectiveUserId, instanceScope, instanceStatusFilter, isManager]);
+  }, [effectiveUserId, instanceScope, instanceStatusFilter, isManager, priorityFilter, firmFilter, employeeFilter]);
 
   // Firms the user can see (for the firm chips) and client organisations (for the client picker)
   const fetchFirmsAndClients = useCallback(async () => {
@@ -191,7 +195,7 @@ export default function RecurringTasksPanel() {
 
   useEffect(() => { fetchRole(); }, [fetchRole]);
   useEffect(() => { if (effectiveUserId) loadAll(); }, [effectiveUserId]); // eslint-disable-line
-  useEffect(() => { fetchInstances(); }, [instanceScope, instanceStatusFilter]); // eslint-disable-line
+  useEffect(() => { fetchInstances(); }, [instanceScope, instanceStatusFilter, priorityFilter, firmFilter, employeeFilter]); // eslint-disable-line
 
   // Keep overdue flags fresh once per session for managers opening the panel —
   // cheap RPC, avoids stale "pending" instances lingering past their due date.
@@ -214,6 +218,10 @@ export default function RecurringTasksPanel() {
   }, [effectiveUserId, fetchTemplates, fetchInstances]);
 
   const resetForm = () => { setForm(emptyForm); setEditingId(null); };
+
+  // How far ahead to generate occurrences: up to the end date if one is set, otherwise one year ahead
+  const scheduleHorizon = (endDate: string | null | undefined) =>
+    endDate || ymdLocal(new Date(Date.now() + 365 * 86400000));
 
   const openEdit = (t: RecurringTask) => {
     setForm({
@@ -247,6 +255,17 @@ export default function RecurringTasksPanel() {
   const handleSave = async () => {
     if (!form.title.trim()) { toast.error('Title is required'); return; }
     if (form.assigned_to_users.length === 0) { toast.error('Assign at least one person'); return; }
+    // Guard against accidental duplicates: a new template with the same title and start date
+    if (!editingId) {
+      const { data: dup } = await supabase
+        .from('recurring_tasks')
+        .select('id')
+        .eq('title', form.title.trim())
+        .eq('start_date', form.start_date)
+        .eq('is_active', true)
+        .limit(1);
+      if (dup && dup.length > 0 && !window.confirm(`An active recurring task "${form.title.trim()}" starting ${form.start_date} already exists. Create another one?`)) return;
+    }
     setSaving(true);
     try {
       const { data: creatorProfile } = await supabase.from('user_profiles').select('firm_id').eq('id', effectiveUserId).single();
@@ -318,14 +337,26 @@ export default function RecurringTasksPanel() {
         }
       }
 
-      // Immediately generate the next 30 days of instances so the schedule
-      // is populated right away instead of waiting for a nightly job.
+      // Editing a template: drop its pending future occurrences so they are rebuilt from the new start date
+      // (completed / in-progress ones are kept as history)
+      if (editingId) {
+        const { error: clearErr } = await supabase
+          .from('recurring_task_instances')
+          .delete()
+          .eq('recurring_task_id', editingId)
+          .eq('status', 'pending')
+          .gte('due_date', form.start_date);
+        if (clearErr) throw clearErr;
+      }
+
+      // Generate the schedule from the start date up to the end date (or one year ahead)
       if (taskId) {
-        await supabase.rpc('generate_recurring_instances', {
+        const { error: genErr } = await supabase.rpc('generate_recurring_instances', {
           p_recurring_task_id: taskId,
           p_from_date: form.start_date,
-          p_to_date: ymdLocal(new Date(Date.now() + 30 * 86400000)),
+          p_to_date: scheduleHorizon(form.end_date || null),
         });
+        if (genErr) throw new Error(`Saved, but occurrences were not generated: ${genErr.message}`);
       }
 
       setShowForm(false);
@@ -368,10 +399,24 @@ export default function RecurringTasksPanel() {
       const { data, error } = await supabase.rpc('generate_recurring_instances', {
         p_recurring_task_id: t.id,
         p_from_date: ymdLocal(new Date()),
-        p_to_date: ymdLocal(new Date(Date.now() + 60 * 86400000)),
+        p_to_date: scheduleHorizon(t.end_date),
       });
       if (error) throw error;
-      toast.success(`Generated ${data ?? 0} new instance(s) for the next 60 days`);
+      if ((data ?? 0) === 0) {
+        // Nothing new was created: say why, instead of a bare "0"
+        const { data: last } = await supabase
+          .from('recurring_task_instances')
+          .select('due_date')
+          .eq('recurring_task_id', t.id)
+          .order('due_date', { ascending: false })
+          .limit(1);
+        const lastDue = last?.[0]?.due_date;
+        toast.info(lastDue
+          ? `Nothing new to create: occurrences already exist up to ${lastDue}${t.end_date ? ` (repeat-up-to ${t.end_date})` : ''}`
+          : 'No occurrences were created. Check the start date, frequency and assignees.');
+      } else {
+        toast.success(`Generated ${data} new instance(s) up to ${t.end_date || 'one year ahead'}`);
+      }
       fetchInstances();
     } catch (err: any) {
       toast.error(err.message || 'Failed to generate instances');
@@ -383,7 +428,7 @@ export default function RecurringTasksPanel() {
   const generateAllForOrg = async () => {
     setGeneratingId('all');
     try {
-      const { data, error } = await supabase.rpc('generate_all_recurring_instances', { p_days_ahead: 30 });
+      const { data, error } = await supabase.rpc('generate_all_recurring_instances', { p_days_ahead: 365 });
       if (error) throw error;
       toast.success(`Generated ${data ?? 0} instance(s) across all active recurring tasks`);
       fetchInstances();
