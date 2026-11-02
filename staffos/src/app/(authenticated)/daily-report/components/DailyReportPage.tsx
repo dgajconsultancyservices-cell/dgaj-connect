@@ -157,6 +157,14 @@ function summarize(d: ReportData) {
   };
 }
 
+// Star marker on the capital line for buckets where fuel was purchased
+function PurchaseStar(props: { cx?: number; cy?: number; payload?: { purchaseMarker?: number | null } }) {
+  const { cx, cy, payload } = props;
+  // Recharts renders dots in a list, so each one needs a key
+  if (cx == null || cy == null || payload?.purchaseMarker == null) return <g key={`no-star-${cx}-${cy}`} />;
+  return <text key={`star-${cx}-${cy}`} x={cx} y={cy - 10} textAnchor="middle" fontSize={16} fill="#f59e0b">★</text>;
+}
+
 // The fixed buckets shown on the chart for the period that contains `anchor`.
 // Empty buckets are kept so the x-axis always shows the full period.
 function windowFor(anchor: Date, period: Period): Bucket[] {
@@ -295,7 +303,7 @@ export default function DailyReportPage() {
   const [customTo, setCustomTo] = useState(() => ymd(new Date()));
   const [history, setHistory] = useState<HistoryRow[]>([]);
   // Rates for the trend: a day saved without a price uses the rate in force on that day
-  const [historyRates, setHistoryRates] = useState<{ firm_id: string; fuel_key: string; rate: number; effective_from: string }[]>([]);
+  const [historyRates, setHistoryRates] = useState<{ firm_id: string; fuel_key: string; rate: number; cost_price: number | null; effective_from: string }[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
 
   const isAll = firmId === ALL;
@@ -480,12 +488,12 @@ export default function DailyReportPage() {
 
     const { data: rateRows, error: rateErr } = await supabase
       .from('fuel_rates')
-      .select('firm_id, fuel_key, rate, effective_from')
+      .select('firm_id, fuel_key, rate, cost_price, effective_from')
       .in('firm_id', isAll ? firmIds : [firmId])
       .lte('effective_from', to)
       .order('effective_from', { ascending: false });
     if (rateErr) toast.error('Could not load fuel rates for the trend');
-    setHistoryRates((rateRows as { firm_id: string; fuel_key: string; rate: number; effective_from: string }[]) || []);
+    setHistoryRates((rateRows as { firm_id: string; fuel_key: string; rate: number; cost_price: number | null; effective_from: string }[]) || []);
     setHistoryLoading(false);
   }, [windowBuckets, firmId, firmIds.join(',')]);
 
@@ -495,9 +503,9 @@ export default function DailyReportPage() {
   const { trendRows, fuelNames, tankNames } = useMemo(() => {
     const names: string[] = [];
     const tankNames: string[] = [];
-    type Agg = { cashSale: number; upi: number; paid: number; openByDate: Map<string, number>; cashByDate: Map<string, number>; tankByDate: Map<string, Record<string, number>>; rev: Record<string, number>; lit: Record<string, number> };
+    type Agg = { cashSale: number; upi: number; paid: number; openByDate: Map<string, number>; cashByDate: Map<string, number>; tankByDate: Map<string, Record<string, number>>; capByDate: Map<string, { cash: number; portal: number; stock: number; purchase: number }>; rev: Record<string, number>; lit: Record<string, number> };
     const aggs = new Map<string, Agg>();
-    windowBuckets.forEach((b) => aggs.set(b.key, { cashSale: 0, upi: 0, paid: 0, cashByDate: new Map(), openByDate: new Map(), tankByDate: new Map(), rev: {}, lit: {} }));
+    windowBuckets.forEach((b) => aggs.set(b.key, { cashSale: 0, upi: 0, paid: 0, cashByDate: new Map(), openByDate: new Map(), tankByDate: new Map(), capByDate: new Map(), rev: {}, lit: {} }));
 
     history.forEach((row) => {
       const key = keyFor(row.report_date, period, customMonthly);
@@ -523,6 +531,20 @@ export default function DailyReportPage() {
       a.paid += s.paid;
       a.cashByDate.set(row.report_date, (a.cashByDate.get(row.report_date) || 0) + s.cashInHand);
       a.openByDate.set(row.report_date, (a.openByDate.get(row.report_date) || 0) + s.openingCash);
+      // Capital parts for the day: stock is valued at the cost price in force on that day
+      const costOn = (fuelKey: string) => {
+        const c = historyRates.find((x) => x.firm_id === row.firm_id && x.fuel_key === fuelKey && x.effective_from <= row.report_date && x.cost_price != null);
+        return c ? Number(c.cost_price) : 0;
+      };
+      const stock = nd.fuels.reduce((t, f) => t + num(f.totalStock) * costOn(f.id), 0);
+      const purchase = nd.fuels.reduce((t, f) => t + num(f.purchase), 0);
+      const prev = a.capByDate.get(row.report_date) || { cash: 0, portal: 0, stock: 0, purchase: 0 };
+      a.capByDate.set(row.report_date, {
+        cash: prev.cash + s.cashInHand,
+        portal: prev.portal + s.portalBalance,
+        stock: prev.stock + stock,
+        purchase: prev.purchase + purchase,
+      });
       s.fuelRows.forEach((r) => {
         if (!names.includes(r.name)) names.push(r.name);
         a.rev[r.name] = (a.rev[r.name] || 0) + r.revenue;
@@ -534,7 +556,7 @@ export default function DailyReportPage() {
       const a = aggs.get(b.key)!;
       const latest = Array.from(a.cashByDate.keys()).sort().pop();
       const revenue = Object.values(a.rev).reduce((s, v) => s + v, 0);
-      const out: Record<string, number | string> = {
+      const out: Record<string, number | string | null> = {
         label: b.label,
         revenue,
         cashSale: a.cashSale,
@@ -545,6 +567,16 @@ export default function DailyReportPage() {
         openingCash: (() => { const first = Array.from(a.openByDate.keys()).sort()[0]; return first ? a.openByDate.get(first) || 0 : 0; })(),
         expensesPaid: a.paid,
       };
+      // Capital: the latest saved day in the bucket; a star marks buckets with a purchase
+      const cap = latest ? a.capByDate.get(latest) : undefined;
+      const capTotal = cap ? cap.cash + cap.portal + cap.stock : 0;
+      const purchaseTotal = Array.from(a.capByDate.values()).reduce((t, v) => t + v.purchase, 0);
+      out.capCash = cap?.cash ?? 0;
+      out.capPortal = cap?.portal ?? 0;
+      out.capStock = cap?.stock ?? 0;
+      out.capital = capTotal;
+      out.purchaseLitres = purchaseTotal;
+      out.purchaseMarker = purchaseTotal > 0 ? capTotal : null;
       // Tank stock: latest saved day in the bucket
       const latestTankDay = Array.from(a.tankByDate.keys()).sort().pop();
       const tankVals = latestTankDay ? a.tankByDate.get(latestTankDay) || {} : {};
@@ -991,7 +1023,7 @@ export default function DailyReportPage() {
               <div className="overflow-x-auto">
                 <table className="w-full text-sm min-w-[760px]">
                   <thead>
-                    <tr>{['Tank', 'Fuel', 'Dip reading (ft)', 'Ltr stock', 'Tank capacity (L)', 'Empty capacity (L)', ''].map((h, i) => <th key={i} className={thCls}>{h}</th>)}</tr>
+                    <tr>{['Tank', 'Fuel', 'Dip reading (mm)', 'Ltr stock', 'Tank capacity (L)', 'Empty capacity (L)', ''].map((h, i) => <th key={i} className={thCls}>{h}</th>)}</tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
                     {data.tanks.map((t) => (
@@ -1255,6 +1287,23 @@ export default function DailyReportPage() {
                         <Bar dataKey="openingCash" name="Opening cash" fill="#6366f1" radius={[3, 3, 0, 0]} maxBarSize={40} />
                         <Bar dataKey="cashSale" name="Cash sale" fill="#10b981" radius={[3, 3, 0, 0]} maxBarSize={40} />
                         <Line type="monotone" dataKey="cashInHand" name="Closing cash" stroke="#8b5cf6" strokeWidth={2} dot={{ r: 3 }} />
+                      </ComposedChart>
+                    </ResponsiveContainer>
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold text-slate-600 dark:text-slate-400 mb-2">Capital: closing cash, portal and stock at cost (bars), capital (line). ★ = fuel purchased</p>
+                    <ResponsiveContainer width="100%" height={280}>
+                      <ComposedChart data={trendRows} margin={{ top: 8, right: 8, left: 0, bottom: 0 }} barGap={0} barCategoryGap="15%">
+                        <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                        <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#64748b' }} axisLine={false} tickLine={false} interval={xInterval} angle={-45} textAnchor="end" height={64} />
+                        <YAxis tick={{ fontSize: 11, fill: '#64748b' }} axisLine={false} tickLine={false} tickFormatter={(v) => `₹${Number(v) >= 1000 ? (Number(v) / 1000).toFixed(0) + 'k' : v}`} />
+                        <Tooltip formatter={(v: number) => fmtMoney(v)} contentStyle={{ fontSize: 12, borderRadius: 8 }} />
+                        <Legend wrapperStyle={{ fontSize: 12 }} />
+                        <Bar dataKey="capCash" name="Closing cash" stackId="cap" fill="#10b981" maxBarSize={40} />
+                        <Bar dataKey="capPortal" name="Portal balance" stackId="cap" fill="#06b6d4" maxBarSize={40} />
+                        <Bar dataKey="capStock" name="Stock at cost" stackId="cap" fill="#f59e0b" radius={[3, 3, 0, 0]} maxBarSize={40} />
+                        <Line type="monotone" dataKey="capital" name="Capital" stroke="#8b5cf6" strokeWidth={2} dot={{ r: 3 }} />
+                        <Line dataKey="purchaseMarker" name="Fuel purchased" stroke="none" dot={PurchaseStar} activeDot={false} legendType="star" />
                       </ComposedChart>
                     </ResponsiveContainer>
                   </div>
