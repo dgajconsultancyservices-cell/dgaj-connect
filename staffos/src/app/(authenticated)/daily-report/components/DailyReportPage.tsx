@@ -1291,7 +1291,7 @@ export default function DailyReportPage() {
                     </ResponsiveContainer>
                   </div>
                   <div>
-                    <p className="text-xs font-semibold text-slate-600 dark:text-slate-400 mb-2">Capital: closing cash, portal and stock at cost (bars), capital (line). ★ = fuel purchased</p>
+                    <p className="text-xs font-semibold text-slate-600 dark:text-slate-400 mb-2">Capital: closing cash, portal balance and stock at cost (bars), capital (line). ★ = fuel purchased</p>
                     <ResponsiveContainer width="100%" height={280}>
                       <ComposedChart data={trendRows} margin={{ top: 8, right: 8, left: 0, bottom: 0 }} barGap={0} barCategoryGap="15%">
                         <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
@@ -1299,9 +1299,9 @@ export default function DailyReportPage() {
                         <YAxis tick={{ fontSize: 11, fill: '#64748b' }} axisLine={false} tickLine={false} tickFormatter={(v) => `₹${Number(v) >= 1000 ? (Number(v) / 1000).toFixed(0) + 'k' : v}`} />
                         <Tooltip formatter={(v: number) => fmtMoney(v)} contentStyle={{ fontSize: 12, borderRadius: 8 }} />
                         <Legend wrapperStyle={{ fontSize: 12 }} />
-                        <Bar dataKey="capCash" name="Closing cash" stackId="cap" fill="#10b981" maxBarSize={40} />
-                        <Bar dataKey="capPortal" name="Portal balance" stackId="cap" fill="#06b6d4" maxBarSize={40} />
-                        <Bar dataKey="capStock" name="Stock at cost" stackId="cap" fill="#f59e0b" radius={[3, 3, 0, 0]} maxBarSize={40} />
+                        <Bar dataKey="capCash" name="Closing cash" fill="#10b981" radius={[3, 3, 0, 0]} maxBarSize={40} />
+                        <Bar dataKey="capPortal" name="Portal balance" fill="#06b6d4" radius={[3, 3, 0, 0]} maxBarSize={40} />
+                        <Bar dataKey="capStock" name="Stock at cost" fill="#f59e0b" radius={[3, 3, 0, 0]} maxBarSize={40} />
                         <Line type="monotone" dataKey="capital" name="Capital" stroke="#8b5cf6" strokeWidth={2} dot={{ r: 3 }} />
                         <Line dataKey="purchaseMarker" name="Fuel purchased" stroke="none" dot={PurchaseStar} activeDot={false} legendType="star" />
                       </ComposedChart>
