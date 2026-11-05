@@ -765,7 +765,7 @@
 // }
 'use client';
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import TaskSubtasks from '@/components/TaskSubtasks';
 import InstanceSubtasks from '@/components/InstanceSubtasks';
 import {
@@ -780,6 +780,7 @@ import { createClient } from '@/lib/supabase/client';
 import { useVisibleFirms } from '@/lib/useVisibleFirms';
 import FirmBadge from '@/components/FirmBadge';
 import FirmFilterTabs from '@/components/FirmFilterTabs';
+import { useLanguage, type TranslationKey } from '@/contexts/LanguageContext';
 
 /* ───────────────────────── Types ───────────────────────── */
 
@@ -827,20 +828,20 @@ interface ClientOrg { id: string; name: string; }
 
 /* ───────────────────────── Config ───────────────────────── */
 
-const STATUS_CONFIG: Record<TaskStatus, { label: string; color: string; bg: string; dot: string }> = {
-  not_started: { label: 'Not Started', color: 'text-slate-600 dark:text-slate-300', bg: 'bg-slate-100 dark:bg-slate-700', dot: 'bg-slate-400' },
-  in_progress: { label: 'In Progress', color: 'text-blue-600 dark:text-blue-300', bg: 'bg-blue-50 dark:bg-blue-900/30', dot: 'bg-blue-500' },
-  waiting: { label: 'Waiting', color: 'text-amber-600 dark:text-amber-300', bg: 'bg-amber-50 dark:bg-amber-900/30', dot: 'bg-amber-400' },
-  blocked: { label: 'Blocked', color: 'text-red-600 dark:text-red-300', bg: 'bg-red-50 dark:bg-red-900/30', dot: 'bg-red-500' },
-  completed: { label: 'Completed', color: 'text-emerald-600 dark:text-emerald-300', bg: 'bg-emerald-50 dark:bg-emerald-900/30', dot: 'bg-emerald-500' },
-  cancelled: { label: 'Cancelled', color: 'text-slate-400', bg: 'bg-slate-100 dark:bg-slate-800', dot: 'bg-slate-300' },
+const STATUS_CONFIG: Record<TaskStatus, { labelKey: TranslationKey; color: string; bg: string; dot: string }> = {
+  not_started: { labelKey: 'atNotStarted', color: 'text-slate-600 dark:text-slate-300', bg: 'bg-slate-100 dark:bg-slate-700', dot: 'bg-slate-400' },
+  in_progress: { labelKey: 'atInProgress', color: 'text-blue-600 dark:text-blue-300', bg: 'bg-blue-50 dark:bg-blue-900/30', dot: 'bg-blue-500' },
+  waiting: { labelKey: 'atWaiting', color: 'text-amber-600 dark:text-amber-300', bg: 'bg-amber-50 dark:bg-amber-900/30', dot: 'bg-amber-400' },
+  blocked: { labelKey: 'atBlocked', color: 'text-red-600 dark:text-red-300', bg: 'bg-red-50 dark:bg-red-900/30', dot: 'bg-red-500' },
+  completed: { labelKey: 'atCompleted', color: 'text-emerald-600 dark:text-emerald-300', bg: 'bg-emerald-50 dark:bg-emerald-900/30', dot: 'bg-emerald-500' },
+  cancelled: { labelKey: 'atCancelled', color: 'text-slate-400', bg: 'bg-slate-100 dark:bg-slate-800', dot: 'bg-slate-300' },
 };
 
-const PRIORITY_CONFIG: Record<Priority, { label: string; color: string; bg: string; border: string }> = {
-  critical: { label: 'Urgent', color: 'text-red-600 dark:text-red-300', bg: 'bg-red-50 dark:bg-red-900/30', border: 'border-l-red-500' },
-  high: { label: 'High', color: 'text-orange-600 dark:text-orange-300', bg: 'bg-orange-50 dark:bg-orange-900/30', border: 'border-l-orange-400' },
-  medium: { label: 'Medium', color: 'text-amber-600 dark:text-amber-300', bg: 'bg-amber-50 dark:bg-amber-900/30', border: 'border-l-amber-300' },
-  low: { label: 'Low', color: 'text-slate-500 dark:text-slate-300', bg: 'bg-slate-100 dark:bg-slate-700', border: 'border-l-slate-300' },
+const PRIORITY_CONFIG: Record<Priority, { labelKey: TranslationKey; color: string; bg: string; border: string }> = {
+  critical: { labelKey: 'atUrgent', color: 'text-red-600 dark:text-red-300', bg: 'bg-red-50 dark:bg-red-900/30', border: 'border-l-red-500' },
+  high: { labelKey: 'atHigh', color: 'text-orange-600 dark:text-orange-300', bg: 'bg-orange-50 dark:bg-orange-900/30', border: 'border-l-orange-400' },
+  medium: { labelKey: 'atMedium', color: 'text-amber-600 dark:text-amber-300', bg: 'bg-amber-50 dark:bg-amber-900/30', border: 'border-l-amber-300' },
+  low: { labelKey: 'atLow', color: 'text-slate-500 dark:text-slate-300', bg: 'bg-slate-100 dark:bg-slate-700', border: 'border-l-slate-300' },
 };
 
 // Older screens used `status` (todo / in-progress / review / done); newer ones use `task_status`.
@@ -851,24 +852,24 @@ const LEGACY_OUT: Record<TaskStatus, string> = {
   not_started: 'todo', in_progress: 'in-progress', waiting: 'review', blocked: 'in-progress', completed: 'done', cancelled: 'todo',
 };
 
-const RECURRING_OPTIONS = [
-  { value: '', label: 'One-time' },
-  { value: 'daily', label: 'Daily' },
-  { value: 'weekly', label: 'Weekly' },
-  { value: 'bi-monthly', label: 'Bi-Monthly (15th & 30th)' },
-  { value: 'monthly', label: 'Monthly' },
-  { value: 'quarterly', label: 'Quarterly' },
-  { value: 'yearly', label: 'Yearly' },
+const RECURRING_OPTIONS: { value: string; labelKey: TranslationKey }[] = [
+  { value: '', labelKey: 'atOneTime' },
+  { value: 'daily', labelKey: 'atDaily' },
+  { value: 'weekly', labelKey: 'atWeekly' },
+  { value: 'bi-monthly', labelKey: 'atBiMonthly' },
+  { value: 'monthly', labelKey: 'atMonthly' },
+  { value: 'quarterly', labelKey: 'atQuarterly' },
+  { value: 'yearly', labelKey: 'atYearly' },
 ];
 
-const SECTIONS: { key: Bucket; label: string; icon: any; head: string; badge: string }[] = [
-  { key: 'overdue', label: 'Overdue', icon: AlertTriangle, head: 'text-red-600 dark:text-red-400', badge: 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-300' },
-  { key: 'today', label: 'Today', icon: Calendar, head: 'text-blue-600 dark:text-blue-400', badge: 'bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-300' },
-  { key: 'tomorrow', label: 'Tomorrow', icon: CalendarDays, head: 'text-slate-800 dark:text-slate-200', badge: 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300' },
-  { key: 'week', label: 'Later this week', icon: CalendarDays, head: 'text-slate-800 dark:text-slate-200', badge: 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300' },
-  { key: 'later', label: 'Later', icon: CalendarDays, head: 'text-slate-800 dark:text-slate-200', badge: 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300' },
-  { key: 'nodate', label: 'No due date', icon: Inbox, head: 'text-slate-500 dark:text-slate-400', badge: 'bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-300' },
-  { key: 'done', label: 'Completed', icon: CheckCircle2, head: 'text-emerald-600 dark:text-emerald-400', badge: 'bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-300' },
+const SECTIONS: { key: Bucket; labelKey: TranslationKey; icon: any; head: string; badge: string }[] = [
+  { key: 'overdue', labelKey: 'atOverdue', icon: AlertTriangle, head: 'text-red-600 dark:text-red-400', badge: 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-300' },
+  { key: 'today', labelKey: 'atToday', icon: Calendar, head: 'text-blue-600 dark:text-blue-400', badge: 'bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-300' },
+  { key: 'tomorrow', labelKey: 'atTomorrow', icon: CalendarDays, head: 'text-slate-800 dark:text-slate-200', badge: 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300' },
+  { key: 'week', labelKey: 'atLaterThisWeek', icon: CalendarDays, head: 'text-slate-800 dark:text-slate-200', badge: 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300' },
+  { key: 'later', labelKey: 'atLater', icon: CalendarDays, head: 'text-slate-800 dark:text-slate-200', badge: 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300' },
+  { key: 'nodate', labelKey: 'atNoDueDate', icon: Inbox, head: 'text-slate-500 dark:text-slate-400', badge: 'bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-300' },
+  { key: 'done', labelKey: 'atCompleted', icon: CheckCircle2, head: 'text-emerald-600 dark:text-emerald-400', badge: 'bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-300' },
 ];
 
 const TASK_COLS = `id, title, description, task_status, status, priority, category_id, task_category,
@@ -1011,6 +1012,7 @@ function TaskRow({
   row, today, expanded, busy, showAssignee, firm, canDelete, candidates,
   onToggle, onComplete, onStatus, onDelete, onDuplicate, onRequest, onRespond,
 }: TaskRowProps) {
+  const { t } = useLanguage();
   const [pick, setPick] = useState('');
   const [sending, setSending] = useState(false);
   const sc = STATUS_CONFIG[row.status];
@@ -1020,9 +1022,9 @@ function TaskRow({
   const diff = row.due_date ? daysBetween(row.due_date, today) : null;
   const dueLabel =
     diff === null ? null
-      : diff < 0 ? `${Math.abs(diff)}d overdue`
-      : diff === 0 ? 'Today'
-      : diff === 1 ? 'Tomorrow'
+      : diff < 0 ? t('atDaysOverdue').replace('{days}', String(Math.abs(diff)))
+      : diff === 0 ? t('atToday')
+      : diff === 1 ? t('atTomorrow')
       : fmtDay(row.due_date!);
   const names = row.assigneeNames;
   const canRequest = row.source === 'task' && !done && row.mine && candidates.length > 0;
@@ -1048,7 +1050,7 @@ function TaskRow({
             onClick={e => { e.stopPropagation(); onComplete(); }}
             disabled={busy || (row.source === 'instance' && done)}
             className="disabled:opacity-60"
-            title={done ? 'Reopen' : 'Mark complete'}
+            title={done ? t('atReopen') : t('atMarkComplete')}
           >
             {busy ? <Loader2 size={18} className="animate-spin text-blue-500" />
               : done ? <CheckCircle2 size={18} className="text-emerald-500" />
@@ -1065,7 +1067,7 @@ function TaskRow({
             {row.blocked && row.status !== 'blocked' && <Flag size={11} className="text-red-500 flex-shrink-0" />}
             {row.collaborator && <Users size={11} className="text-indigo-500 flex-shrink-0" />}
             {row.invite && (
-              <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300">Invite</span>
+              <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300">{t('atInvite')}</span>
             )}
           </div>
           {(row.client || row.category || (showAssignee && firm)) && (
@@ -1079,12 +1081,12 @@ function TaskRow({
         </td>
 
         <td className="py-3 pr-4 whitespace-nowrap">
-          <span className={`px-2 py-0.5 rounded-md text-[11px] font-semibold ${pc.bg} ${pc.color}`}>{pc.label}</span>
+          <span className={`px-2 py-0.5 rounded-md text-[11px] font-semibold ${pc.bg} ${pc.color}`}>{t(pc.labelKey)}</span>
         </td>
 
         <td className="py-3 pr-4 whitespace-nowrap">
           <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold ${sc.bg} ${sc.color}`}>
-            <span className={`w-1.5 h-1.5 rounded-full ${sc.dot}`} />{sc.label}
+            <span className={`w-1.5 h-1.5 rounded-full ${sc.dot}`} />{t(sc.labelKey)}
           </span>
         </td>
 
@@ -1097,7 +1099,7 @@ function TaskRow({
           )}
           {row.collabs.length > 0 && (
             <div className="text-[11px] font-normal text-slate-500 dark:text-slate-400 mt-0.5 max-w-[240px] truncate">
-              with {row.collabs.map(c => (c.status === 'pending' ? `${c.name} (requested)` : c.name)).join(', ')}
+              {t('atWithPeople').replace('{people}', row.collabs.map(c => (c.status === 'pending' ? `${c.name} (${t('atRequested')})` : c.name)).join(', '))}
             </div>
           )}
         </td>
@@ -1119,7 +1121,7 @@ function TaskRow({
             <button
               onClick={onDuplicate}
               disabled={busy}
-              title="Duplicate task (opens a new task with the same details)"
+              title={t('atDuplicateTask')}
               className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500 hover:text-blue-600 disabled:opacity-50"
             >
               <Copy size={14} />
@@ -1134,22 +1136,22 @@ function TaskRow({
           <td colSpan={7} className="pb-4 pr-4">
             <div className="space-y-3">
               <p className={`text-sm whitespace-pre-wrap ${row.description ? 'text-slate-600 dark:text-slate-300' : 'text-slate-400 italic'}`}>
-                {row.description || 'No description'}
+                {row.description || t('atNoDescription')}
               </p>
 
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
-                <div><p className="text-slate-400">Assigned to</p><p className="font-medium text-slate-700 dark:text-slate-200">{names.join(', ') || '—'}</p></div>
+                <div><p className="text-slate-400">{t('atAssignedTo')}</p><p className="font-medium text-slate-700 dark:text-slate-200">{names.join(', ') || '—'}</p></div>
                 {row.collabs.length > 0 && (
                   <div className="col-span-2">
-                    <p className="text-slate-400">Collaborators</p>
+                    <p className="text-slate-400">{t('atCollaborators')}</p>
                     <p className="font-medium text-slate-700 dark:text-slate-200">
-                      {row.collabs.map(c => (c.status === 'pending' ? `${c.name} (requested)` : c.name)).join(', ')}
+                      {row.collabs.map(c => (c.status === 'pending' ? `${c.name} (${t('atRequested')})` : c.name)).join(', ')}
                     </p>
                   </div>
                 )}
-                <div><p className="text-slate-400">Assigned by</p><p className="font-medium text-slate-700 dark:text-slate-200">{row.assigned_by || '—'}</p></div>
-                <div><p className="text-slate-400">Category</p><p className="font-medium text-slate-700 dark:text-slate-200">{row.category || '—'}</p></div>
-                <div><p className="text-slate-400">Est. hours</p><p className="font-medium text-slate-700 dark:text-slate-200">{row.est_hours > 0 ? `${row.est_hours}h` : '—'}</p></div>
+                <div><p className="text-slate-400">{t('atAssignedBy')}</p><p className="font-medium text-slate-700 dark:text-slate-200">{row.assigned_by || '—'}</p></div>
+                <div><p className="text-slate-400">{t('atCategory')}</p><p className="font-medium text-slate-700 dark:text-slate-200">{row.category || '—'}</p></div>
+                <div><p className="text-slate-400">{t('atEstHours')}</p><p className="font-medium text-slate-700 dark:text-slate-200">{row.est_hours > 0 ? t('atHoursUnit').replace('{hours}', String(row.est_hours)) : '—'}</p></div>
               </div>
 
               {row.source === 'task' && (
@@ -1171,7 +1173,7 @@ function TaskRow({
                           : 'bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-600'
                       }`}
                     >
-                      {STATUS_CONFIG[s].label}
+                      {t(STATUS_CONFIG[s].labelKey)}
                     </button>
                   ))}
                 </div>
@@ -1186,39 +1188,39 @@ function TaskRow({
                       />
                     </div>
                   )}
-                  <p className="text-xs text-slate-400">Recurring instance — tick the circle to mark it done.</p>
+                  <p className="text-xs text-slate-400">{t('atRecurringHint')}</p>
                 </div>
               )}
 
               {row.invite && (
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-xs text-slate-600 dark:text-slate-300">You have been asked to join this task.</span>
+                  <span className="text-xs text-slate-600 dark:text-slate-300">{t('atAskedToJoin')}</span>
                   <button
                     onClick={() => onRespond(true)}
                     disabled={busy}
                     className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium disabled:opacity-50"
                   >
-                    Accept
+                    {t('atAccept')}
                   </button>
                   <button
                     onClick={() => onRespond(false)}
                     disabled={busy}
                     className="px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-600 text-xs font-medium text-slate-600 dark:text-slate-300 disabled:opacity-50"
                   >
-                    Decline
+                    {t('atDecline')}
                   </button>
                 </div>
               )}
 
               {canRequest && (
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-xs font-semibold text-slate-600 dark:text-slate-300">Ask someone to join:</span>
+                  <span className="text-xs font-semibold text-slate-600 dark:text-slate-300">{t('atAskToJoin')}</span>
                   <select
                     value={pick}
                     onChange={e => setPick(e.target.value)}
                     className="px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
                   >
-                    <option value="">Choose a person…</option>
+                    <option value="">{t('atChoosePerson')}</option>
                     {candidates.map(u => <option key={u.id} value={u.id}>{u.full_name}</option>)}
                   </select>
                   <button
@@ -1226,7 +1228,7 @@ function TaskRow({
                     disabled={!pick || sending}
                     className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-medium disabled:opacity-50"
                   >
-                    {sending ? 'Sending…' : 'Send request'}
+                    {sending ? t('atSending') : t('atSendRequest')}
                   </button>
                 </div>
               )}
@@ -1238,7 +1240,7 @@ function TaskRow({
                     disabled={busy}
                     className="inline-flex items-center gap-1.5 text-xs font-medium text-red-600 hover:text-red-700 disabled:opacity-50"
                   >
-                    <Trash2 size={13} /> Delete task
+                    <Trash2 size={13} /> {t('atDeleteTask')}
                   </button>
                 </div>
               )}
@@ -1269,6 +1271,7 @@ function CreateTaskModal({
   ownFirmId: string | null; firms: { id: string; name: string; code: string }[]; canPickFirm: boolean;
   initial?: DuplicateSeed | null;
 }) {
+  const { t } = useLanguage();
   const [saving, setSaving] = useState(false);
   const [f, setF] = useState(() => ({
     title: initial?.title ?? '',
@@ -1318,9 +1321,9 @@ function CreateTaskModal({
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!f.title.trim()) { toast.error('Task title is required'); return; }
-    if (!f.due_date) { toast.error('Due date is required'); return; }
-    if (f.due_date < startToday) { toast.error('Due date cannot be before today'); return; }
+    if (!f.title.trim()) { toast.error(t('atTitleRequired')); return; }
+    if (!f.due_date) { toast.error(t('atDueDateRequired')); return; }
+    if (f.due_date < startToday) { toast.error(t('atDueDateBeforeToday')); return; }
     setSaving(true);
     try {
       const picked = users.filter(u => f.assignees.includes(u.id));
@@ -1374,13 +1377,13 @@ function CreateTaskModal({
             sort_order: i,
           })),
         );
-        if (subErr) toast.error(`Task created, but subtasks failed: ${subErr.message}`);
+        if (subErr) toast.error(t('atSubtasksFailed').replace('{error}', subErr.message));
       }
-      toast.success('Task created');
+      toast.success(t('atTaskCreated'));
       onCreated();
       onClose();
     } catch (err: any) {
-      toast.error(err?.message || 'Failed to create task');
+      toast.error(err?.message || t('atFailedCreateTask'));
     } finally {
       setSaving(false);
     }
@@ -1390,50 +1393,50 @@ function CreateTaskModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
       <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 dark:border-slate-700">
-          <h2 className="text-lg font-bold text-slate-900 dark:text-slate-100">New Task</h2>
+          <h2 className="text-lg font-bold text-slate-900 dark:text-slate-100">{t('atNewTask')}</h2>
           <button onClick={onClose} className="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800"><X size={18} className="text-slate-500" /></button>
         </div>
         <form onSubmit={submit} className="p-6 space-y-4">
           <div>
-            <label className={labelCls}>Title *</label>
-            <input className={inputCls} value={f.title} onChange={e => set('title', e.target.value)} placeholder="What needs to be done?" autoFocus />
+            <label className={labelCls}>{t('atTitleLabel')}</label>
+            <input className={inputCls} value={f.title} onChange={e => set('title', e.target.value)} placeholder={t('atWhatNeedsDoing')} autoFocus />
           </div>
           <div>
-            <label className={labelCls}>Description</label>
+            <label className={labelCls}>{t('atDescription')}</label>
             <textarea className={`${inputCls} resize-none`} rows={2} value={f.description} onChange={e => set('description', e.target.value)} />
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className={labelCls}>Priority</label>
+              <label className={labelCls}>{t('atPriority')}</label>
               <select className={inputCls} value={f.priority} onChange={e => set('priority', e.target.value)}>
-                <option value="critical">Urgent</option><option value="high">High</option>
-                <option value="medium">Medium</option><option value="low">Low</option>
+                <option value="critical">{t('atUrgent')}</option><option value="high">{t('atHigh')}</option>
+                <option value="medium">{t('atMedium')}</option><option value="low">{t('atLow')}</option>
               </select>
             </div>
             <div>
-              <label className={labelCls}>Repeats</label>
+              <label className={labelCls}>{t('atRepeats')}</label>
               <select className={inputCls} value={f.recurring} onChange={e => set('recurring', e.target.value)}>
-                {RECURRING_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                {RECURRING_OPTIONS.map(o => <option key={o.value} value={o.value}>{t(o.labelKey)}</option>)}
               </select>
             </div>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div>
-              <label className={labelCls}>Start date</label>
+              <label className={labelCls}>{t('atStartDate')}</label>
               <input type="date" className={`${inputCls} opacity-70 cursor-not-allowed`} value={startToday} readOnly disabled />
             </div>
             <div>
-              <label className={labelCls}>Due date *</label>
+              <label className={labelCls}>{t('atDueDateField')}</label>
               <input type="date" className={inputCls} value={f.due_date} min={startToday} required
                 onChange={e => set('due_date', e.target.value)} />
             </div>
             <div>
-              <label className={labelCls}>Due time</label>
+              <label className={labelCls}>{t('atDueTime')}</label>
               <input type="time" className={inputCls} value={f.due_time} onChange={e => set('due_time', e.target.value)} />
             </div>
           </div>
           <div>
-            <label className={labelCls}>Firm</label>
+            <label className={labelCls}>{t('atFirm')}</label>
             {canPickFirm && firms.length > 0 ? (
               <div className="flex flex-wrap gap-1.5">
                 {firms.map(fm => {
@@ -1462,24 +1465,24 @@ function CreateTaskModal({
                           : 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-600'
                       }`}
                     >
-                      {fm.name}{fm.id === ownFirmId ? ' (my firm)' : ''}
+                      {fm.name}{fm.id === ownFirmId ? t('atMyFirmSuffix') : ''}
                     </button>
                   );
                 })}
               </div>
             ) : (
               <p className="text-sm text-slate-700 dark:text-slate-200 px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
-                {firms.find(fm => fm.id === ownFirmId)?.name || 'My firm'}
+                {firms.find(fm => fm.id === ownFirmId)?.name || t('atMyFirm')}
               </p>
             )}
             {canPickFirm && (
               <p className="text-[11px] text-slate-400 mt-1">
-                {f.firmIds.length === 0 ? 'Pick one or more firms' : `${f.firmIds.length} firm${f.firmIds.length > 1 ? 's' : ''} selected`}
+                {f.firmIds.length === 0 ? t('atPickFirms') : (f.firmIds.length > 1 ? t('atFirmsSelected') : t('atFirmSelected')).replace('{count}', String(f.firmIds.length))}
               </p>
             )}
           </div>
           <div>
-            <label className={labelCls}>Assign to (one or more)</label>
+            <label className={labelCls}>{t('atAssignTo')}</label>
             <div className="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto">
               {users.filter(u => f.firmIds.length === 0 || (!!u.firm_id && f.firmIds.includes(u.firm_id))).map(u => {
                 const on = f.assignees.includes(u.id);
@@ -1499,52 +1502,52 @@ function CreateTaskModal({
                         : 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-600'
                     }`}
                   >
-                    {u.full_name}{u.id === uid ? ' (me)' : ''}
+                    {u.full_name}{u.id === uid ? t('atMeSuffix') : ''}
                   </button>
                 );
               })}
             </div>
             <p className="text-[11px] text-slate-400 mt-1">
-              {f.assignees.length === 0 ? 'Unassigned' : `${f.assignees.length} selected`}
+              {f.assignees.length === 0 ? t('atUnassigned') : t('atSelectedCount').replace('{count}', String(f.assignees.length))}
             </p>
           </div>
           <div>
             <div className="flex items-center justify-between mb-1">
-              <label className={labelCls + ' mb-0'}>Subtasks</label>
+              <label className={labelCls + ' mb-0'}>{t('atSubtasks')}</label>
               <button type="button" onClick={() => setF(p => ({ ...p, subtasks: [...p.subtasks, { title: '', assigned_to: '' }] }))}
-                className="text-xs font-semibold text-blue-600 hover:text-blue-700">+ Add subtask</button>
+                className="text-xs font-semibold text-blue-600 hover:text-blue-700">{t('atAddSubtask')}</button>
             </div>
-            {f.subtasks.length === 0 && <p className="text-[11px] text-slate-400">No subtasks yet.</p>}
+            {f.subtasks.length === 0 && <p className="text-[11px] text-slate-400">{t('atNoSubtasksYet')}</p>}
             <div className="space-y-2">
               {f.subtasks.map((s, i) => (
                 <div key={i} className="grid grid-cols-12 gap-2 items-center">
-                  <input className={inputCls + ' col-span-11'} placeholder="Subtask title" value={s.title}
+                  <input className={inputCls + ' col-span-11'} placeholder={t('atSubtaskTitle')} value={s.title}
                     onChange={e => setF(p => ({ ...p, subtasks: p.subtasks.map((x, j) => (j === i ? { ...x, title: e.target.value } : x)) }))} />
                   <button type="button" onClick={() => setF(p => ({ ...p, subtasks: p.subtasks.filter((_, j) => j !== i) }))}
-                    className="col-span-1 flex justify-center text-red-500 hover:text-red-600" aria-label="Remove subtask">×</button>
+                    className="col-span-1 flex justify-center text-red-500 hover:text-red-600" aria-label={t('atRemoveSubtask')}>×</button>
                 </div>
               ))}
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className={labelCls}>Category</label>
+              <label className={labelCls}>{t('atCategory')}</label>
               <select className={inputCls} value={f.category_id} onChange={e => set('category_id', e.target.value)}>
-                <option value="">General</option>
+                <option value="">{t('atGeneral')}</option>
                 {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
             </div>
             <div>
-              <label className={labelCls}>Client</label>
+              <label className={labelCls}>{t('atClient')}</label>
               <select className={inputCls} value={f.pick} onChange={e => set('pick', e.target.value)}>
-                <option value="">Internal</option>
+                <option value="">{t('atInternal')}</option>
                 {subs.length > 0 && (
-                  <optgroup label="Subsidiaries">
+                  <optgroup label={t('atSubsidiaries')}>
                     {subs.map(s => <option key={`firm:${s.id}`} value={`firm:${s.id}`}>{s.name}</option>)}
                   </optgroup>
                 )}
                 {clients.length > 0 && (
-                  <optgroup label="Clients">
+                  <optgroup label={t('atClients')}>
                     {clients.map(c => <option key={`client:${c.id}`} value={`client:${c.id}`}>{c.name}</option>)}
                   </optgroup>
                 )}
@@ -1552,9 +1555,9 @@ function CreateTaskModal({
             </div>
           </div>
           <div className="flex gap-3 pt-2">
-            <button type="button" onClick={onClose} className="flex-1 px-4 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 text-sm font-medium hover:bg-slate-50 dark:hover:bg-slate-800">Cancel</button>
+            <button type="button" onClick={onClose} className="flex-1 px-4 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 text-sm font-medium hover:bg-slate-50 dark:hover:bg-slate-800">{t('atCancel')}</button>
             <button type="submit" disabled={saving} className="flex-1 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium disabled:opacity-50 flex items-center justify-center gap-2">
-              {saving ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}{saving ? 'Creating…' : 'Create task'}
+              {saving ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}{saving ? t('atCreating') : t('atCreateTask')}
             </button>
           </div>
         </form>
@@ -1566,6 +1569,10 @@ function CreateTaskModal({
 /* ───────────────────────── Page ───────────────────────── */
 
 export default function TasksHub() {
+  const { t } = useLanguage();
+  // loadTasks is memoised without t so a language switch does not refetch; it reads the latest t through this ref
+  const tRef = useRef(t);
+  tRef.current = t;
   const { effectiveUserId } = useAuth();
   const uid = effectiveUserId;
   const supabase = useMemo(() => createClient(), []);
@@ -1684,7 +1691,7 @@ export default function TasksHub() {
         let q: any = supabase.from('tasks').select(TASK_COLS).order('created_at', { ascending: false }).limit(1000);
         if (!isDirector) {
           const { data: firmIds, error: fe } = await supabase.rpc('get_visible_firm_ids', { p_user_id: uid, p_module: 'tasks' });
-          if (fe || !firmIds || firmIds.length === 0) throw new Error('Could not work out which firm(s) you can see');
+          if (fe || !firmIds || firmIds.length === 0) throw new Error(tRef.current('atCouldNotWorkOutFirms'));
           // A task shows if its primary firm OR any of its firms (firm_ids) is visible to you
           const fl = (firmIds as string[]).join(',');
           q = q.or(`firm_id.in.(${fl}),firm_ids.ov.{${fl}}`);
@@ -1772,7 +1779,7 @@ export default function TasksHub() {
       setRawTasks(list);
     } catch (err: any) {
       console.error('Task load error:', err);
-      toast.error(err?.message || 'Failed to load tasks');
+      toast.error(err?.message || tRef.current('atFailedLoadTasks'));
     } finally {
       setLoading(false);
     }
@@ -1786,17 +1793,22 @@ export default function TasksHub() {
   const catSlugMap = useMemo(() => Object.fromEntries(categories.map(c => [c.slug, c.name])), [categories]);
   const clientMap = useMemo(() => Object.fromEntries(clients.map(c => [c.id, c.name])), [clients]);
 
+  const rowText = useMemo(() => ({
+    untitled: t('atUntitled'), recurringTask: t('atRecurringTask'), me: t('atMe'),
+    recurringSchedule: t('atRecurringSchedule'), unknown: t('atUnknown'),
+  }), [t]);
+
   const rows: Row[] = useMemo(() => rawTasks.map((t: any): Row => {
     if (t.__source === 'instance') {
       const st = t.status === 'completed' ? 'completed' : t.status === 'cancelled' ? 'cancelled' : 'not_started';
       return {
         key: `instance-${t.id}`, id: t.id, source: 'instance',
-        title: t.task_name || t.recurring_tasks?.title || 'Recurring task',
+        title: t.task_name || t.recurring_tasks?.title || rowText.recurringTask,
         description: t.recurring_tasks?.description || '', status: st as TaskStatus,
         priority: (['critical', 'high', 'medium', 'low'].includes(t.priority) ? t.priority : 'medium') as Priority,
         due_date: t.due_date || null, due_time: t.due_time || null,
-        assignee: userMap[t.assigned_to] || userName || 'Me', assigneeNames: [userMap[t.assigned_to] || userName || 'Me'],
-        assigned_by: 'Recurring schedule', client: t.client_org_name || '', category: '',
+        assignee: userMap[t.assigned_to] || userName || rowText.me, assigneeNames: [userMap[t.assigned_to] || userName || rowText.me],
+        assigned_by: rowText.recurringSchedule, client: t.client_org_name || '', category: '',
         recurring: true, frequency: t.recurring_tasks?.frequency || null,
         blocked: false, progress: 0, est_hours: 0,
         completed_at: t.completion_datetime || null, created_at: t.created_at || '', collaborator: false, firm_id: null,
@@ -1812,7 +1824,7 @@ export default function TasksHub() {
     const status = normStatus(t);
     return {
       key: `task-${t.id}`, id: t.id, source: 'task',
-      title: t.title || 'Untitled', description: t.description || '', status,
+      title: t.title || rowText.untitled, description: t.description || '', status,
       priority: (['critical', 'high', 'medium', 'low'].includes(t.priority) ? t.priority : 'medium') as Priority,
       due_date: t.due_date || null, due_time: t.due_time || null,
       assignee: assigneeNames.length ? assigneeNames.join(', ') : 'Unassigned', assigneeNames,
@@ -1827,11 +1839,11 @@ export default function TasksHub() {
       collaborator: !!t.__collab && !mine,
       mine: mine || uid === t.creator_id,
       invite: !!t.__invite,
-      collabs: (t.__collabs || []).map((c: any) => ({ name: userMap[c.user_id] || 'Unknown', status: c.status || 'accepted' })),
+      collabs: (t.__collabs || []).map((c: any) => ({ name: userMap[c.user_id] || rowText.unknown, status: c.status || 'accepted' })),
       firm_id: t.firm_id || null,
       firm_ids: t.firm_ids || (t.firm_id ? [t.firm_id] : null),
     };
-  }).filter(r => r.status !== 'cancelled'), [rawTasks, userMap, catMap, catSlugMap, clientMap, uid, userName]);
+  }).filter(r => r.status !== 'cancelled'), [rawTasks, userMap, catMap, catSlugMap, clientMap, uid, userName, rowText]);
 
   /* ── derived: type filter → KPIs → visible list ── */
   const firmRows = useMemo(
@@ -1989,7 +2001,7 @@ export default function TasksHub() {
       if (spawned) setRawTasks(prev => [{ ...spawned, __source: 'task' }, ...prev]);
     } catch (err) {
       console.error('Spawn next occurrence failed:', err);
-      toast.warning("Marked done, but couldn't create the next occurrence");
+      toast.warning(t('atNextOccurrenceFailed'));
     }
   };
 
@@ -2004,7 +2016,7 @@ export default function TasksHub() {
         const { error } = await supabase.from('recurring_task_instances').update(patch).eq('id', row.id);
         if (error) throw error;
         setRawTasks(prev => prev.map(r => (r.__source === 'instance' && r.id === row.id ? { ...r, ...patch } : r)));
-        toast.success('Marked as completed');
+        toast.success(t('atMarkedAsCompleted'));
         return;
       }
       const patch: any = { task_status: status, status: LEGACY_OUT[status], is_blocked: status === 'blocked' };
@@ -2020,10 +2032,10 @@ export default function TasksHub() {
       const { error } = await supabase.from('tasks').update(patch).eq('id', row.id);
       if (error) throw error;
       setRawTasks(prev => prev.map(r => (r.__source === 'task' && r.id === row.id ? { ...r, ...patch } : r)));
-      toast.success(status === 'completed' ? 'Task completed' : `Moved to ${STATUS_CONFIG[status].label}`);
+      toast.success(status === 'completed' ? t('atTaskCompleted') : t('atMovedTo').replace('{label}', t(STATUS_CONFIG[status].labelKey)));
       if (status === 'completed' && row.frequency) await spawnNext(row.id);
     } catch (err: any) {
-      toast.error(err?.message || 'Failed to update task');
+      toast.error(err?.message || t('atFailedUpdateTask'));
     } finally {
       setBusyKey(null);
     }
@@ -2031,14 +2043,14 @@ export default function TasksHub() {
 
   /* ── render ── */
   const kpiCards: { key: Quick; label: string; value: string | number; icon: any; text: string; bg: string; ring: string; clickable: boolean }[] = [
-    { key: 'today', label: 'Due Today', value: kpis.today, icon: Calendar, text: 'text-blue-600', bg: 'bg-blue-50 dark:bg-blue-900/20', ring: 'ring-blue-400', clickable: true },
-    { key: 'overdue', label: 'Overdue', value: kpis.overdue, icon: AlertTriangle, text: 'text-red-600', bg: 'bg-red-50 dark:bg-red-900/20', ring: 'ring-red-400', clickable: true },
-    { key: 'next7', label: 'Next 7 Days', value: kpis.next7, icon: Clock, text: 'text-amber-600', bg: 'bg-amber-50 dark:bg-amber-900/20', ring: 'ring-amber-400', clickable: true },
-    { key: 'done', label: 'Done This Week', value: kpis.done, icon: CheckCircle2, text: 'text-emerald-600', bg: 'bg-emerald-50 dark:bg-emerald-900/20', ring: 'ring-emerald-400', clickable: true },
-    { key: 'urgent', label: 'Urgent / High', value: kpis.urgent, icon: Zap, text: 'text-orange-600', bg: 'bg-orange-50 dark:bg-orange-900/20', ring: 'ring-orange-400', clickable: true },
-    { key: 'blocked', label: 'Blocked', value: kpis.blocked, icon: Flag, text: 'text-rose-600', bg: 'bg-rose-50 dark:bg-rose-900/20', ring: 'ring-rose-400', clickable: true },
-    { key: 'none', label: 'Completion Rate', value: `${kpis.completionRate.toFixed(0)}%`, icon: BarChart3, text: 'text-indigo-600', bg: 'bg-indigo-50 dark:bg-indigo-900/20', ring: '', clickable: false },
-    { key: 'none', label: 'On-Time Rate', value: `${kpis.onTimeRate.toFixed(0)}%`, icon: TrendingUp, text: 'text-teal-600', bg: 'bg-teal-50 dark:bg-teal-900/20', ring: '', clickable: false },
+    { key: 'today', label: t('atDueToday'), value: kpis.today, icon: Calendar, text: 'text-blue-600', bg: 'bg-blue-50 dark:bg-blue-900/20', ring: 'ring-blue-400', clickable: true },
+    { key: 'overdue', label: t('atOverdue'), value: kpis.overdue, icon: AlertTriangle, text: 'text-red-600', bg: 'bg-red-50 dark:bg-red-900/20', ring: 'ring-red-400', clickable: true },
+    { key: 'next7', label: t('atNext7Days'), value: kpis.next7, icon: Clock, text: 'text-amber-600', bg: 'bg-amber-50 dark:bg-amber-900/20', ring: 'ring-amber-400', clickable: true },
+    { key: 'done', label: t('atDoneThisWeek'), value: kpis.done, icon: CheckCircle2, text: 'text-emerald-600', bg: 'bg-emerald-50 dark:bg-emerald-900/20', ring: 'ring-emerald-400', clickable: true },
+    { key: 'urgent', label: t('atUrgentHigh'), value: kpis.urgent, icon: Zap, text: 'text-orange-600', bg: 'bg-orange-50 dark:bg-orange-900/20', ring: 'ring-orange-400', clickable: true },
+    { key: 'blocked', label: t('atBlocked'), value: kpis.blocked, icon: Flag, text: 'text-rose-600', bg: 'bg-rose-50 dark:bg-rose-900/20', ring: 'ring-rose-400', clickable: true },
+    { key: 'none', label: t('atCompletionRate'), value: `${kpis.completionRate.toFixed(0)}%`, icon: BarChart3, text: 'text-indigo-600', bg: 'bg-indigo-50 dark:bg-indigo-900/20', ring: '', clickable: false },
+    { key: 'none', label: t('atOnTimeRate'), value: `${kpis.onTimeRate.toFixed(0)}%`, icon: TrendingUp, text: 'text-teal-600', bg: 'bg-teal-50 dark:bg-teal-900/20', ring: '', clickable: false },
   ];
 
   // Ask another person to join a task. They receive it as a pending invite (accept/decline in Task Board).
@@ -2054,17 +2066,17 @@ export default function TasksHub() {
       added_by: uid,
     });
     if (error) {
-      toast.error(error.code === '23505' ? `${target?.full_name || 'They'} is already on this task` : error.message);
+      toast.error(error.code === '23505' ? t('atAlreadyOnTask').replace('{name}', target?.full_name || t('atThey')) : error.message);
       return false;
     }
-    toast.success(`Request sent to ${target?.full_name || 'them'}`);
+    toast.success(t('atRequestSentTo').replace('{name}', target?.full_name || t('atThem')));
     return true;
   };
 
   // Directors and managers only (permission is also checked in the UI; RLS allows any signed-in delete today)
   const deleteTask = async (row: Row) => {
     const isOccurrence = row.source === 'instance';
-    if (!window.confirm(`Delete "${row.title}"${isOccurrence ? ' (this occurrence only)' : ''}? This cannot be undone.`)) return;
+    if (!window.confirm(t('atConfirmDelete').replace('{title}', row.title).replace('{scope}', isOccurrence ? t('atThisOccurrenceOnly') : ''))) return;
     setBusyKey(row.key);
     try {
       // A recurring occurrence deletes only that one date; the template and its other dates stay
@@ -2072,9 +2084,9 @@ export default function TasksHub() {
       if (error) throw error;
       setRawTasks(prev => prev.filter(r => !((r.__source === 'task' || r.__source === 'instance') && r.id === row.id)));
       setExpanded(null);
-      toast.success('Task deleted');
+      toast.success(t('atTaskDeleted'));
     } catch (err: any) {
-      toast.error(err?.message || 'Could not delete task');
+      toast.error(err?.message || t('atCouldNotDeleteTask'));
     } finally {
       setBusyKey(null);
     }
@@ -2091,20 +2103,20 @@ export default function TasksHub() {
         .eq('task_id', row.id)
         .eq('user_id', uid);
       if (error) throw error;
-      toast.success(accept ? 'You joined the task' : 'Request declined');
+      toast.success(accept ? t('atYouJoinedTask') : t('atRequestDeclined'));
       await loadTasks();
     } catch (err: any) {
-      toast.error(err?.message || 'Could not update the request');
+      toast.error(err?.message || t('atCouldNotUpdateRequest'));
     } finally {
       setBusyKey(null);
     }
   };
 
   const scopeSubtitle =
-    !canToggleScope ? 'Your tasks'
-      : scope === 'mine' ? 'Tasks assigned to you'
-      : isDirector ? 'Every task across all firms'
-      : 'Tasks in the firms you can see';
+    !canToggleScope ? t('atYourTasks')
+      : scope === 'mine' ? t('atTasksAssignedToYou')
+      : isDirector ? t('atEveryTaskAllFirms')
+      : t('atTasksInFirms');
 
   const totalVisible = visible.length;
   const firmById = Object.fromEntries(visibleFirms.map(f => [f.id, { name: f.name, code: f.code }]));
@@ -2130,20 +2142,20 @@ export default function TasksHub() {
         <div className="max-w-6xl mx-auto px-4 sm:px-6 py-4">
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <div className="flex items-center gap-3">
-              <button onClick={() => router.back()} className="p-2 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-800" title="Back">
+              <button onClick={() => router.back()} className="p-2 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-800" title={t('atBack')}>
                 <ArrowLeft size={16} />
               </button>
               <div>
-                <h1 className="text-xl font-bold text-slate-900 dark:text-slate-100">Tasks</h1>
+                <h1 className="text-xl font-bold text-slate-900 dark:text-slate-100">{t('atTasks')}</h1>
                 <p className="text-sm text-slate-500 dark:text-slate-400">{scopeSubtitle}</p>
               </div>
             </div>
             <div className="flex items-center gap-2">
-              <button onClick={loadTasks} className="p-2 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-800" title="Refresh">
+              <button onClick={loadTasks} className="p-2 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-800" title={t('atRefresh')}>
                 <RefreshCw size={15} className={loading ? 'animate-spin' : ''} />
               </button>
               <button onClick={() => setShowCreate(true)} className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium shadow-sm">
-                <Plus size={15} /> New Task
+                <Plus size={15} /> {t('atNewTask')}
               </button>
             </div>
           </div>
@@ -2155,8 +2167,8 @@ export default function TasksHub() {
                 value={scope}
                 onChange={v => { setScope(v); setExpanded(null); setAssigneeF('all'); setFirmF('all'); }}
                 options={[
-                  { value: 'mine', label: 'My Tasks', icon: User },
-                  { value: 'all', label: isDirector ? 'All Tasks · All Firms' : 'All Tasks · My Firms', icon: Users },
+                  { value: 'mine', label: t('atMyTasks'), icon: User },
+                  { value: 'all', label: isDirector ? t('atAllTasksAllFirms') : t('atAllTasksMyFirms'), icon: Users },
                 ]}
               />
             )}
@@ -2164,9 +2176,9 @@ export default function TasksHub() {
               value={typeFilter}
               onChange={setTypeFilter}
               options={[
-                { value: 'all', label: 'All', count: typeCounts.all },
-                { value: 'one-time', label: 'One-time', count: typeCounts.oneTime },
-                { value: 'recurring', label: 'Recurring', icon: Repeat, count: typeCounts.recurring },
+                { value: 'all', label: t('atAll'), count: typeCounts.all },
+                { value: 'one-time', label: t('atOneTime'), count: typeCounts.oneTime },
+                { value: 'recurring', label: t('atRecurring'), icon: Repeat, count: typeCounts.recurring },
               ]}
             />
           </div>
@@ -2209,7 +2221,7 @@ export default function TasksHub() {
               <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
               <input
                 value={search} onChange={e => setSearch(e.target.value)}
-                placeholder={effectiveScope === 'all' ? 'Search tasks, people or clients…' : 'Search tasks or clients…'}
+                placeholder={effectiveScope === 'all' ? t('atSearchTasksPeopleClients') : t('atSearchTasksClients')}
                 className="w-full pl-9 pr-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
@@ -2221,37 +2233,37 @@ export default function TasksHub() {
                   : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'
               }`}
             >
-              <SlidersHorizontal size={14} /> Filters{activeFilters > 0 && ` (${activeFilters})`}
+              <SlidersHorizontal size={14} /> {t('atFilters')}{activeFilters > 0 && ` (${activeFilters})`}
             </button>
             <label className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300 cursor-pointer select-none px-1">
               <input type="checkbox" checked={showCompleted} onChange={e => setShowCompleted(e.target.checked)} className="rounded border-slate-300" />
-              Show completed
+              {t('atShowCompleted')}
             </label>
             {showCompleted && (
               <Segmented<'yesterday' | '7d' | '30d' | 'all'>
                 value={doneRange}
                 onChange={setDoneRange}
                 options={[
-                  { value: 'yesterday', label: 'Yesterday' },
-                  { value: '7d', label: 'Last 7 days' },
-                  { value: '30d', label: 'Last 30 days' },
-                  { value: 'all', label: 'All past' },
+                  { value: 'yesterday', label: t('atYesterday') },
+                  { value: '7d', label: t('atLast7Days') },
+                  { value: '30d', label: t('atLast30Days') },
+                  { value: 'all', label: t('atAllPast') },
                 ]}
               />
             )}
             {(activeFilters > 0 || quick !== 'none' || search) && (
               <button onClick={clearAll} className="text-sm text-slate-500 hover:text-slate-700 dark:hover:text-slate-200 flex items-center gap-1">
-                <X size={13} /> Clear
+                <X size={13} /> {t('atClear')}
               </button>
             )}
           </div>
           {showFilters && (
             <div className="flex flex-wrap gap-2 mt-3 pt-3 border-t border-slate-100 dark:border-slate-800">
-              <FilterSelect value={statusF} onChange={setStatusF} label="All statuses" options={['not_started', 'in_progress', 'waiting', 'blocked', 'completed']} />
-              <FilterSelect value={priorityF} onChange={setPriorityF} label="All priorities" options={['critical', 'high', 'medium', 'low']} />
-              {categoryOptions.length > 0 && <FilterSelect value={categoryF} onChange={setCategoryF} label="All categories" options={categoryOptions} />}
-              {clientOptions.length > 0 && <FilterSelect value={clientF} onChange={setClientF} label="All clients" options={clientOptions} />}
-              {effectiveScope === 'all' && assigneeOptions.length > 0 && <FilterSelect value={assigneeF} onChange={setAssigneeF} label="All assignees" options={assigneeOptions} />}
+              <FilterSelect value={statusF} onChange={setStatusF} label={t('atAllStatuses')} options={['not_started', 'in_progress', 'waiting', 'blocked', 'completed']} />
+              <FilterSelect value={priorityF} onChange={setPriorityF} label={t('atAllPriorities')} options={['critical', 'high', 'medium', 'low']} />
+              {categoryOptions.length > 0 && <FilterSelect value={categoryF} onChange={setCategoryF} label={t('atAllCategories')} options={categoryOptions} />}
+              {clientOptions.length > 0 && <FilterSelect value={clientF} onChange={setClientF} label={t('atAllClients')} options={clientOptions} />}
+              {effectiveScope === 'all' && assigneeOptions.length > 0 && <FilterSelect value={assigneeF} onChange={setAssigneeF} label={t('atAllAssignees')} options={assigneeOptions} />}
             </div>
           )}
         </div>
@@ -2265,10 +2277,10 @@ export default function TasksHub() {
           <div className="text-center py-20 text-slate-400">
             <CheckSquare size={44} className="mx-auto mb-3 opacity-30" />
             <p className="text-base font-medium text-slate-500 dark:text-slate-300">
-              {rows.length === 0 ? "You're all caught up" : 'No tasks match these filters'}
+              {rows.length === 0 ? t('atAllCaughtUp') : t('atNoTasksMatch')}
             </p>
             <p className="text-sm mt-1">
-              {rows.length === 0 ? 'Nothing assigned here yet.' : 'Try clearing a filter or turning on "Show completed".'}
+              {rows.length === 0 ? t('atNothingAssignedYet') : t('atTryClearing').replace('{showCompleted}', t('atShowCompleted'))}
             </p>
           </div>
         ) : (
@@ -2277,13 +2289,13 @@ export default function TasksHub() {
               <thead>
                 <tr className="text-left text-[11px] font-semibold uppercase tracking-wide text-slate-400">
                   <th className="py-2 pl-2 pr-1 w-9" />
-                  <th className="py-2 pr-4 font-semibold">Task</th>
-                  <th className="py-2 pr-4 font-semibold">Priority</th>
-                  <th className="py-2 pr-4 font-semibold">Status</th>
-                  <th className="py-2 pr-4 font-semibold">Assigned to</th>
-                  <th className="py-2 pr-4 font-semibold">Assigned by</th>
-                  <th className="py-2 pr-2 font-semibold">Due</th>
-                  <th className="py-2 pr-2 font-semibold text-right">Copy</th>
+                  <th className="py-2 pr-4 font-semibold">{t('atTask')}</th>
+                  <th className="py-2 pr-4 font-semibold">{t('atPriority')}</th>
+                  <th className="py-2 pr-4 font-semibold">{t('atStatus')}</th>
+                  <th className="py-2 pr-4 font-semibold">{t('atAssignedTo')}</th>
+                  <th className="py-2 pr-4 font-semibold">{t('atAssignedBy')}</th>
+                  <th className="py-2 pr-2 font-semibold">{t('atDue')}</th>
+                  <th className="py-2 pr-2 font-semibold text-right">{t('atCopy')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -2303,7 +2315,7 @@ export default function TasksHub() {
                           >
                             <ChevronDown size={14} className={`text-slate-500 transition-transform ${closed ? '-rotate-90' : ''}`} />
                             <Icon size={14} className={sec.head} />
-                            <span className={`text-sm font-bold ${sec.head}`}>{sec.label}</span>
+                            <span className={`text-sm font-bold ${sec.head}`}>{t(sec.labelKey)}</span>
                             <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${sec.badge}`}>{items.length}</span>
                           </button>
                         </td>

@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { createClient } from '@/lib/supabase/client';
+import { useLanguage } from '@/contexts/LanguageContext';
 
 // Subtask ticks for ONE occurrence of a recurring task. Template subtasks come from
 // recurring_subtasks; progress is stored per occurrence in recurring_instance_subtask_status,
@@ -11,6 +12,7 @@ type SubStatus = 'pending' | 'in_progress' | 'completed';
 
 export default function InstanceSubtasks({ instanceId, templateId, readOnly = false }: { instanceId: string; templateId: string; readOnly?: boolean }) {
   const supabase = createClient();
+  const { t } = useLanguage();
   const [subs, setSubs] = useState<{ id: string; title: string }[]>([]);
   const [status, setStatus] = useState<Record<string, SubStatus>>({});
   const [loaded, setLoaded] = useState(false);
@@ -40,7 +42,7 @@ export default function InstanceSubtasks({ instanceId, templateId, readOnly = fa
       { onConflict: 'instance_id,subtask_id' }
     );
     if (error) {
-      toast.error('Could not update subtask');
+      toast.error(t('stCouldNotUpdate'));
       setStatus((m) => ({ ...m, [subtaskId]: prev }));
     }
   };
@@ -50,7 +52,7 @@ export default function InstanceSubtasks({ instanceId, templateId, readOnly = fa
 
   return (
     <div className="space-y-1.5">
-      <p className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">Subtasks · {done}/{subs.length} done</p>
+      <p className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">{t('stSubtasks')} · {done}/{subs.length} {t('stDone')}</p>
       {subs.map((s) => {
         const v = status[s.id] || 'pending';
         return (
@@ -59,12 +61,12 @@ export default function InstanceSubtasks({ instanceId, templateId, readOnly = fa
               value={v}
               disabled={readOnly}
               onChange={(e) => change(s.id, e.target.value as SubStatus)}
-              aria-label="Subtask status"
+              aria-label={t('stSubtaskStatus')}
               className="border border-slate-200 dark:border-slate-600 rounded-md px-1.5 py-0.5 text-[11px] bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 cursor-pointer disabled:opacity-60"
             >
-              <option value="pending">Pending</option>
-              <option value="in_progress">In progress</option>
-              <option value="completed">Completed</option>
+              <option value="pending">{t('stPending')}</option>
+              <option value="in_progress">{t('stInProgress')}</option>
+              <option value="completed">{t('stCompleted')}</option>
             </select>
             <span className={`flex-1 min-w-0 truncate ${v === 'completed' ? 'line-through text-slate-400' : 'text-slate-700 dark:text-slate-200'}`}>{s.title}</span>
           </div>

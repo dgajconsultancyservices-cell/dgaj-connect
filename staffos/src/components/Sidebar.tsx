@@ -243,12 +243,10 @@ export default function Sidebar({ activePath, onClose }: SidebarProps) {
                   : item.id === 'nav-holidays' ? t('holidayManagement')
                   : item.id === 'nav-payroll' ? t('payroll')
                   : item.id === 'nav-profile' ? t('myProfile')
-                  : item.id === 'nav-my-tasks' ? 'My Tasks'
-                  : item.id === 'nav-all-tasks' ? 'All Tasks'
-                  : item.id === 'nav-task-management' ? 'Task Management'
-                  : item.id === 'nav-clients' ? 'Clients'
-                  : item.id === 'nav-recurring-tasks' ? 'Recurring Tasks'
-                  : item.id === 'nav-task-analytics' ? 'Task Analytics'
+                  : item.id === 'nav-my-tasks' ? t('myTasks')
+                  : item.id === 'nav-task-management' ? t('taskManagement')
+                  : item.id === 'nav-clients' ? t('clients')
+                  : item.id === 'nav-daily-report' ? t('dailyReport')
                   : item.id === 'nav-calendar' ? t('calendar')
                   : item.id === 'nav-tickets' ? t('ticketCentre')
                   : item.id === 'nav-expenses' ? t('expenseCentre')

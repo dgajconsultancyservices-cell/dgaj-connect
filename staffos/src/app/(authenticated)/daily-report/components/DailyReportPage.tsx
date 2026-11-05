@@ -8,6 +8,7 @@ import { Save, Plus, Trash2, Loader2, BarChart3, Fuel } from 'lucide-react';
 import { toast } from 'sonner';
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
+import { useLanguage, type TranslationKey } from '@/contexts/LanguageContext';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -60,12 +61,12 @@ const ALL = '__all__'; // director-only view across every selected firm
 
 const DEFAULT_FUELS = ['MS', 'HSD', 'POWER', 'TURBO', 'E20', 'XP95'];
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-const PERIODS: { id: Period; label: string }[] = [
-  { id: 'week', label: 'Week (7 days)' },
-  { id: 'month', label: 'Month (weeks)' },
-  { id: 'quarter', label: 'Quarter (months)' },
-  { id: 'year', label: 'Year (months)' },
-  { id: 'custom', label: 'Custom (from – to)' },
+const PERIODS: { id: Period; labelKey: TranslationKey }[] = [
+  { id: 'week', labelKey: 'drPeriodWeek' },
+  { id: 'month', labelKey: 'drPeriodMonth' },
+  { id: 'quarter', labelKey: 'drPeriodQuarter' },
+  { id: 'year', labelKey: 'drPeriodYear' },
+  { id: 'custom', labelKey: 'drPeriodCustom' },
 ];
 const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#14b8a6', '#ec4899', '#64748b'];
 const RATE_ROLES = ['director', 'manager', 'executive'];
@@ -167,7 +168,7 @@ function PurchaseStar(props: { cx?: number; cy?: number; payload?: { purchaseMar
 
 // The fixed buckets shown on the chart for the period that contains `anchor`.
 // Empty buckets are kept so the x-axis always shows the full period.
-function windowFor(anchor: Date, period: Period): Bucket[] {
+function windowFor(anchor: Date, period: Period, weekLabel: (n: number) => string): Bucket[] {
   const y = anchor.getFullYear();
   const m = anchor.getMonth();
 
@@ -187,7 +188,7 @@ function windowFor(anchor: Date, period: Period): Bucket[] {
       const d2 = Math.min(d1 + 6, last);
       out.push({
         key: `w${w + 1}`,
-        label: `Week ${w + 1} (${d1}–${d2} ${MONTHS[m]})`,
+        label: `${weekLabel(w + 1)} (${d1}–${d2} ${MONTHS[m]})`,
         start: ymd(new Date(y, m, d1)),
         end: ymd(new Date(y, m, d2)),
       });
@@ -269,6 +270,7 @@ const cardCls = 'bg-white dark:bg-slate-800 rounded-xl border border-slate-200 d
 
 export default function DailyReportPage() {
   const { pinSession, effectiveUserId } = useAuth();
+  const { t } = useLanguage();
   const supabase = createClient();
 
   const role = pinSession?.role || '';
@@ -308,7 +310,7 @@ export default function DailyReportPage() {
 
   const isAll = firmId === ALL;
   const firmIds = useMemo(() => firms.map((f) => f.id), [firms]);
-  const firmName = isAll ? 'All firms' : (firms.find((f) => f.id === firmId)?.name || '');
+  const firmName = isAll ? t('drAllFirms') : (firms.find((f) => f.id === firmId)?.name || '');
   // Hospital firms get a sales-only report (cash / UPI / expenses / cash in hand)
   const isHospitalSingle = !isAll && (firms.find((f) => f.id === firmId)?.reportType === 'hospital');
 
@@ -410,7 +412,7 @@ export default function DailyReportPage() {
       .order('effective_from', { ascending: false })
       .order('created_at', { ascending: false })
       .then(({ data: rows, error }) => {
-        if (error) toast.error('Could not load fuel rates');
+        if (error) toast.error(t('drErrLoadRates'));
         setRates((rows as RateRow[]) || []);
       });
   }, [firmId, isAll, ratesKey]);
@@ -422,7 +424,7 @@ export default function DailyReportPage() {
       .select('tank_name, capacity_litres')
       .eq('firm_id', firmId)
       .then(({ data: rows, error }) => {
-        if (error) { toast.error('Could not load tank capacities'); return; }
+        if (error) { toast.error(t('drErrLoadTankCap')); return; }
         const m: Record<string, string> = {};
         (rows || []).forEach((r: { tank_name: string; capacity_litres: number }) => { m[r.tank_name] = String(r.capacity_litres); });
         setTankCaps(m);
@@ -439,7 +441,7 @@ export default function DailyReportPage() {
       .eq('report_date', date)
       .maybeSingle()
       .then(({ data: row, error }) => {
-        if (error) toast.error('Could not load report');
+        if (error) toast.error(t('drErrLoadReport'));
         setData(normalize(row?.data));
         setMeta(row ? { by: row.updated_by, at: row.updated_at } : null);
         setLoading(false);
@@ -455,7 +457,7 @@ export default function DailyReportPage() {
       .in('firm_id', firmIds)
       .eq('report_date', date)
       .then(({ data: rows, error }) => {
-        if (error) toast.error('Could not load reports');
+        if (error) toast.error(t('drErrLoadReports'));
         setDayRows((rows as DayRow[]) || []);
         setLoading(false);
       });
@@ -463,8 +465,8 @@ export default function DailyReportPage() {
 
   // Chart buckets for the period that contains the selected date
   const windowBuckets = useMemo(
-    () => (period === 'custom' ? customBuckets(customFrom, customTo) : windowFor(parseYmd(chartDate), period)),
-    [chartDate, period, customFrom, customTo],
+    () => (period === 'custom' ? customBuckets(customFrom, customTo) : windowFor(parseYmd(chartDate), period, (n) => t('drWeekN').replace('{n}', String(n)))),
+    [chartDate, period, customFrom, customTo, t],
   );
   // Show every x-axis label while there are few buckets; thin them out for long custom ranges
   const xInterval: number | 'preserveStartEnd' = windowBuckets.length > 35 ? 'preserveStartEnd' : 0;
@@ -483,7 +485,7 @@ export default function DailyReportPage() {
       .lte('report_date', to);
     q = isAll ? q.in('firm_id', firmIds) : q.eq('firm_id', firmId);
     const { data: rows, error } = await q.order('report_date', { ascending: true });
-    if (error) toast.error('Could not load trend');
+    if (error) toast.error(t('drErrLoadTrend'));
     setHistory((rows as HistoryRow[]) || []);
 
     const { data: rateRows, error: rateErr } = await supabase
@@ -492,7 +494,7 @@ export default function DailyReportPage() {
       .in('firm_id', isAll ? firmIds : [firmId])
       .lte('effective_from', to)
       .order('effective_from', { ascending: false });
-    if (rateErr) toast.error('Could not load fuel rates for the trend');
+    if (rateErr) toast.error(t('drErrLoadTrendRates'));
     setHistoryRates((rateRows as { firm_id: string; fuel_key: string; rate: number; cost_price: number | null; effective_from: string }[]) || []);
     setHistoryLoading(false);
   }, [windowBuckets, firmId, firmIds.join(',')]);
@@ -594,7 +596,7 @@ export default function DailyReportPage() {
 
   // ----- Save (single firm only) -----
   const save = async () => {
-    if (!firmId || isAll) { toast.error('Choose a single firm to save its report'); return; }
+    if (!firmId || isAll) { toast.error(t('drErrChooseFirmSave')); return; }
     setSaving(true);
     const { error } = await supabase
       .from('daily_station_reports')
@@ -604,7 +606,7 @@ export default function DailyReportPage() {
       );
     setSaving(false);
     if (error) {
-      toast.error(`Save failed: ${error.message}`);
+      toast.error(t('drErrSave').replace('{message}', error.message));
       return;
     }
     // Save tank capacities for this firm (only tanks with a name and a capacity)
@@ -615,10 +617,10 @@ export default function DailyReportPage() {
       const { error: capErr } = await supabase
         .from('daily_report_tank_capacity')
         .upsert(capRows, { onConflict: 'firm_id,tank_name' });
-      if (capErr) toast.error(`Tank capacity not saved: ${capErr.message}`);
+      if (capErr) toast.error(t('drErrCapSave').replace('{message}', capErr.message));
     }
     setMeta({ by: updaterName || null, at: new Date().toISOString() });
-    toast.success('Daily report saved');
+    toast.success(t('drSaved'));
     loadHistory();
   };
 
@@ -639,19 +641,19 @@ export default function DailyReportPage() {
   };
 
   const saveRates = async () => {
-    if (!firmId || isAll) { toast.error('Choose a single firm to change rates'); return; }
+    if (!firmId || isAll) { toast.error(t('drErrChooseFirmRates')); return; }
     const changes: { firm_id: string; fuel_key: string; rate: number; cost_price: number | null; effective_from: string; created_by: string | null }[] = [];
     for (const f of data.fuels) {
       const rawR = (rateDraft[f.id] ?? '').trim();
       const rawC = (costDraft[f.id] ?? '').trim();
       const newRate = rawR === '' ? null : Number(rawR);
       const newCost = rawC === '' ? null : Number(rawC);
-      if (newRate !== null && (!Number.isFinite(newRate) || newRate < 0)) { toast.error(`Enter a valid rate for ${f.name}`); return; }
-      if (newCost !== null && (!Number.isFinite(newCost) || newCost < 0)) { toast.error(`Enter a valid cost price for ${f.name}`); return; }
+      if (newRate !== null && (!Number.isFinite(newRate) || newRate < 0)) { toast.error(t('drErrInvalidRate').replace('{name}', f.name)); return; }
+      if (newCost !== null && (!Number.isFinite(newCost) || newCost < 0)) { toast.error(t('drErrInvalidCost').replace('{name}', f.name)); return; }
       const curRate = rateFor(f.id, rateDate);
       const curCost = costFor(f.id, rateDate);
       if (curRate === null && newRate === null) {
-        if (newCost !== null) { toast.error(`Set a sale rate for ${f.name} before its cost price`); return; }
+        if (newCost !== null) { toast.error(t('drErrSaleRateFirst').replace('{name}', f.name)); return; }
         continue;
       }
       const rateChanged = newRate !== null && (curRate === null || Math.abs(curRate - newRate) >= 0.005);
@@ -666,10 +668,12 @@ export default function DailyReportPage() {
         created_by: updaterName || null,
       });
     }
-    if (changes.length === 0) { toast.info('No rate changes to save'); setEditingRates(false); return; }
+    if (changes.length === 0) { toast.info(t('drNoRateChanges')); setEditingRates(false); return; }
     const { error } = await supabase.from('fuel_rates').insert(changes);
-    if (error) { toast.error(`Could not save rates: ${error.message}`); return; }
-    toast.success(`${changes.length} rate${changes.length > 1 ? 's' : ''} saved`);
+    if (error) { toast.error(t('drErrSaveRates').replace('{message}', error.message)); return; }
+    toast.success(changes.length > 1
+      ? t('drRateSavedMany').replace('{count}', String(changes.length))
+      : t('drRateSavedOne').replace('{count}', String(changes.length)));
     setEditingRates(false);
     setRatesKey((k) => k + 1);
   };
@@ -697,11 +701,11 @@ export default function DailyReportPage() {
       <div className="p-6 max-w-2xl mx-auto">
         <div className={cardCls + ' p-8 text-center'}>
           <Fuel size={32} className="mx-auto text-slate-300 mb-3" />
-          <h1 className="text-lg font-bold text-slate-900 dark:text-slate-100">No firm assigned</h1>
+          <h1 className="text-lg font-bold text-slate-900 dark:text-slate-100">{t('drNoFirmAssigned')}</h1>
           <p className="text-sm text-slate-500 mt-1">
             {isDirector
-              ? 'No firms are in the daily report yet. Add firms under Director Settings → Daily Report.'
-              : 'You have not been assigned to any firm\'s daily report. Ask a director to assign you under Director Settings.'}
+              ? t('drNoFirmsDirector')
+              : t('drNoFirmsEmployee')}
           </p>
         </div>
       </div>
@@ -709,46 +713,46 @@ export default function DailyReportPage() {
   }
 
   // Series for the combined trend chart, by report type
-  const fuelBlue = { key: 'revenue', name: 'Fuel revenue', color: '#3b82f6' };
+  const fuelBlue = { key: 'revenue', name: t('drSerFuelRevenue'), color: '#3b82f6' };
   const combinedSeries = isHospitalSingle
     ? [
-      { key: 'cashSale', name: 'Cash sales', color: '#10b981' },
-      { key: 'upiSale', name: 'UPI sales', color: '#06b6d4' },
-      { key: 'expensesPaid', name: 'Expenses paid', color: '#f59e0b' },
-      { key: 'cashInHand', name: 'Cash in hand', color: '#8b5cf6' },
+      { key: 'cashSale', name: t('drSerCashSales'), color: '#10b981' },
+      { key: 'upiSale', name: t('drSerUpiSales'), color: '#06b6d4' },
+      { key: 'expensesPaid', name: t('drSerExpensesPaid'), color: '#f59e0b' },
+      { key: 'cashInHand', name: t('drSerCashInHand'), color: '#8b5cf6' },
     ]
     : isAll
       ? [
         fuelBlue,
-        { key: 'cashSale', name: 'Cash sale', color: '#10b981' },
-        { key: 'upiSale', name: 'UPI sale', color: '#06b6d4' },
-        { key: 'cashInHand', name: 'Cash in hand', color: '#8b5cf6' },
-        { key: 'expensesPaid', name: 'Expenses paid', color: '#f59e0b' },
+        { key: 'cashSale', name: t('drSerCashSale'), color: '#10b981' },
+        { key: 'upiSale', name: t('drSerUpiSale'), color: '#06b6d4' },
+        { key: 'cashInHand', name: t('drSerCashInHand'), color: '#8b5cf6' },
+        { key: 'expensesPaid', name: t('drSerExpensesPaid'), color: '#f59e0b' },
       ]
       : [
         fuelBlue,
-        { key: 'cashSale', name: 'Cash sale', color: '#10b981' },
-        { key: 'cashInHand', name: 'Cash in hand', color: '#8b5cf6' },
-        { key: 'expensesPaid', name: 'Expenses paid', color: '#f59e0b' },
+        { key: 'cashSale', name: t('drSerCashSale'), color: '#10b981' },
+        { key: 'cashInHand', name: t('drSerCashInHand'), color: '#8b5cf6' },
+        { key: 'expensesPaid', name: t('drSerExpensesPaid'), color: '#f59e0b' },
       ];
 
   const tiles = isHospitalSingle
     ? [
-      { label: 'Total Sales Today', value: fmtMoney(totals.hospitalTotal), sub: 'Cash + UPI' },
-      { label: 'Cash Sales', value: fmtMoney(totals.cashSale), sub: 'Cash' },
-      { label: 'UPI Sales', value: fmtMoney(totals.upiSale), sub: 'UPI' },
-      { label: 'Opening Cash', value: fmtMoney(totals.openingCash), sub: 'Start of day' },
-      { label: 'Closing Cash', value: fmtMoney(totals.cashInHand), sub: 'Opening + cash sale' },
-      { label: 'Expenses Paid', value: fmtMoney(totals.paid), sub: `Cash ${fmtMoney(totals.cashPaid)} · Online ${fmtMoney(totals.onlinePaid)}` },
+      { label: t('drTotalSalesToday'), value: fmtMoney(totals.hospitalTotal), sub: t('drCashUpi') },
+      { label: t('drCashSalesTile'), value: fmtMoney(totals.cashSale), sub: t('drCash') },
+      { label: t('drUpiSalesTile'), value: fmtMoney(totals.upiSale), sub: t('drUpi') },
+      { label: t('drOpeningCash'), value: fmtMoney(totals.openingCash), sub: t('drStartOfDay') },
+      { label: t('drClosingCash'), value: fmtMoney(totals.cashInHand), sub: t('drOpeningPlusCashSale') },
+      { label: t('drExpensesPaidTile'), value: fmtMoney(totals.paid), sub: t('drCashOnlineSub').replace('{cash}', fmtMoney(totals.cashPaid)).replace('{online}', fmtMoney(totals.onlinePaid)) },
     ]
     : [
-      { label: 'Capital', value: fmtMoney(totals.capital), sub: 'Cash + portal + stock at cost' },
-      { label: 'Revenue Today', value: fmtMoney(totals.revenue), sub: `${fmtNum(totals.litres)} L sold` },
-      { label: 'Cash Sale Today', value: fmtMoney(totals.cashSale), sub: 'Cash only' },
-      { label: 'Opening Cash', value: fmtMoney(totals.openingCash), sub: 'Start of day' },
-      { label: 'Closing Cash', value: fmtMoney(totals.cashInHand), sub: 'Opening + cash sale' },
-      { label: 'Expenses Paid', value: fmtMoney(totals.paid), sub: `Cash ${fmtMoney(totals.cashPaid)} · Online ${fmtMoney(totals.onlinePaid)}` },
-      { label: 'Balance to Pay', value: fmtMoney(totals.balance), sub: `Total to pay ${fmtMoney(totals.toPay)}` },
+      { label: t('drCapital'), value: fmtMoney(totals.capital), sub: t('drCapitalSub') },
+      { label: t('drRevenueToday'), value: fmtMoney(totals.revenue), sub: t('drLitresSoldSub').replace('{litres}', fmtNum(totals.litres)) },
+      { label: t('drCashSaleToday'), value: fmtMoney(totals.cashSale), sub: t('drCashOnly') },
+      { label: t('drOpeningCash'), value: fmtMoney(totals.openingCash), sub: t('drStartOfDay') },
+      { label: t('drClosingCash'), value: fmtMoney(totals.cashInHand), sub: t('drOpeningPlusCashSale') },
+      { label: t('drExpensesPaidTile'), value: fmtMoney(totals.paid), sub: t('drCashOnlineSub').replace('{cash}', fmtMoney(totals.cashPaid)).replace('{online}', fmtMoney(totals.onlinePaid)) },
+      { label: t('drBalanceToPay'), value: fmtMoney(totals.balance), sub: t('drTotalToPaySub').replace('{amount}', fmtMoney(totals.toPay)) },
     ];
 
   return (
@@ -757,24 +761,24 @@ export default function DailyReportPage() {
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100">
-            Daily Report{firmName ? <span className="text-blue-600 dark:text-blue-400"> · {firmName}</span> : null}
+            {t('drDailyReport')}{firmName ? <span className="text-blue-600 dark:text-blue-400"> · {firmName}</span> : null}
           </h1>
           <p className="text-sm text-slate-500 dark:text-slate-400">
             {isAll
-              ? 'Every firm in the daily report, for the selected day and trend (view only; pick a firm to edit)'
-              : 'Litres, revenue, cash and expenses for the day'}
+              ? t('drDescAll')
+              : t('drDescFirm')}
           </p>
         </div>
         <div className="flex flex-wrap items-end gap-3">
           <div>
-            <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1">Firm</label>
+            <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1">{t('drFirm')}</label>
             <select value={firmId} onChange={(e) => setFirmId(e.target.value)} className={inputCls + ' w-56'}>
-              {isDirector && firms.length > 1 && <option value={ALL}>All firms (view)</option>}
+              {isDirector && firms.length > 1 && <option value={ALL}>{t('drAllFirmsView')}</option>}
               {firms.map((f) => <option key={f.id} value={f.id}>{f.name}{f.code ? ` (${f.code})` : ''}</option>)}
             </select>
           </div>
           <div>
-            <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1">Date</label>
+            <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1">{t('drDate')}</label>
             <input type="date" value={date} onChange={(e) => e.target.value && setDate(e.target.value)}
               className={inputCls + ' w-44'} />
           </div>
@@ -782,7 +786,7 @@ export default function DailyReportPage() {
             <button onClick={save} disabled={saving || loading}
               className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-semibold px-4 py-2 rounded-lg">
               {saving ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />}
-              {saving ? 'Saving…' : 'Save Report'}
+              {saving ? t('drSaving') : t('drSaveReport')}
             </button>
           )}
         </div>
@@ -794,12 +798,12 @@ export default function DailyReportPage() {
         // ---------- All firms (director view) ----------
         <div className={cardCls}>
           <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-700">
-            <h2 className="text-sm font-semibold text-slate-800 dark:text-slate-100">Firms on {date}</h2>
+            <h2 className="text-sm font-semibold text-slate-800 dark:text-slate-100">{t('drFirmsOn').replace('{date}', date)}</h2>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm min-w-[860px]">
               <thead>
-                <tr>{['Firm', 'Revenue / total sales', 'Litres', 'Cash sale', 'UPI sale', 'Cash in hand', 'Expenses paid', 'Balance to pay', 'Last updated'].map((h) => <th key={h} className={thCls}>{h}</th>)}</tr>
+                <tr>{[t('drFirm'), t('drRevenueSales'), t('drLitres'), t('drSerCashSale'), t('drSerUpiSale'), t('drSerCashInHand'), t('drSerExpensesPaid'), t('drBalanceToPayHeader'), t('drLastUpdated')].map((h) => <th key={h} className={thCls}>{h}</th>)}</tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
                 {firms.map((f) => {
@@ -808,7 +812,7 @@ export default function DailyReportPage() {
                     return (
                       <tr key={f.id}>
                         <td className={tdCls + ' font-semibold'}>{f.name}</td>
-                        <td colSpan={8} className={tdCls + ' text-slate-400 italic'}>No report saved for this day</td>
+                        <td colSpan={8} className={tdCls + ' text-slate-400 italic'}>{t('drNoReportDay')}</td>
                       </tr>
                     );
                   }
@@ -836,7 +840,7 @@ export default function DailyReportPage() {
         <>
           {meta?.at && (
             <p className="text-xs text-slate-500 dark:text-slate-400">
-              Last updated by <span className="font-semibold">{meta.by || 'Unknown'}</span> on {fmtTime(meta.at)}
+              {t('drLastUpdatedBy')} <span className="font-semibold">{meta.by || t('drUnknown')}</span> {t('drOn')} {fmtTime(meta.at)}
             </p>
           )}
 
@@ -855,17 +859,17 @@ export default function DailyReportPage() {
             <div className={cardCls}>
               <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between">
                 <div>
-                  <h2 className="text-sm font-semibold text-slate-800 dark:text-slate-100">Fuel Sales &amp; Stock</h2>
-                  <p className="text-[11px] text-slate-500">Rate is set by the manager and applied from its start date. Revenue = litres sold × rate.</p>
+                  <h2 className="text-sm font-semibold text-slate-800 dark:text-slate-100">{t('drFuelSalesStock')}</h2>
+                  <p className="text-[11px] text-slate-500">{t('drFuelSalesHelp')}</p>
                 </div>
                 <button onClick={() => setData((d) => ({ ...d, fuels: [...d.fuels, { id: uid(), name: 'NEW FUEL', price: '', daySales: '', purchase: '', totalStock: '', costPrice: '' }] }))}
-                  className="flex items-center gap-1 text-xs font-semibold text-blue-600 hover:text-blue-700"><Plus size={13} /> Add fuel</button>
+                  className="flex items-center gap-1 text-xs font-semibold text-blue-600 hover:text-blue-700"><Plus size={13} /> {t('drAddFuel')}</button>
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-sm min-w-[960px]">
                   <thead>
                     <tr>
-                      {['Fuel', 'Rate (₹/L)', 'Litres sold', 'Revenue', 'Purchase (L)', 'Total stock (L)', 'Day +/- (L)'].map((h) => (
+                      {[t('drFuel'), t('drRateLitre'), t('drLitresSold'), t('drRevenue'), t('drPurchaseL'), t('drTotalStockL'), t('drDayDiffL')].map((h) => (
                         <th key={h} className={thCls}>{h}</th>
                       ))}
                     </tr>
@@ -877,7 +881,7 @@ export default function DailyReportPage() {
                         <tr key={f.id}>
                           <td className={tdCls}><input className={inputCls + ' font-semibold'} value={f.name} onChange={(e) => setFuel(f.id, { name: e.target.value })} /></td>
                           <td className={tdCls + ' text-right tabular-nums ' + (rate === 0 ? 'text-red-600' : '')}>
-                            {rate === 0 ? 'No rate set' : fmtNum(rate)}
+                            {rate === 0 ? t('drNoRateSet') : fmtNum(rate)}
                           </td>
                           {/* <td className={tdCls}><input type="number" step="0.01" className={inputCls} value={f.costPrice} onChange={(e) => setFuel(f.id, { costPrice: e.target.value })} /></td> */}
                           <td className={tdCls}><input type="number" step="0.01" className={inputCls} value={f.daySales} onChange={(e) => setFuel(f.id, { daySales: e.target.value })} /></td>
@@ -893,7 +897,7 @@ export default function DailyReportPage() {
                   </tbody>
                   <tfoot>
                     <tr className="bg-slate-50 dark:bg-slate-700/50 font-semibold">
-                      <td className={tdCls}>Total</td>
+                      <td className={tdCls}>{t('drTotal')}</td>
 
                       <td className={tdCls} />
                       <td className={tdCls + ' tabular-nums'}>{fmtNum(totals.litres)}</td>
@@ -909,9 +913,9 @@ export default function DailyReportPage() {
 
             {/* Portal balance (own section) */}
             <div className={cardCls + ' p-4 space-y-3'}>
-              <h2 className="text-sm font-semibold text-slate-800 dark:text-slate-100">Portal Balance</h2>
+              <h2 className="text-sm font-semibold text-slate-800 dark:text-slate-100">{t('drPortalBalance')}</h2>
               <div className="grid grid-cols-2 items-center gap-3">
-                <label className="text-xs font-semibold text-slate-600 dark:text-slate-400">Portal balance for the day (₹)</label>
+                <label className="text-xs font-semibold text-slate-600 dark:text-slate-400">{t('drPortalBalanceDay')}</label>
                 <input type="number" step="0.01" className={inputCls} value={data.portalBalance}
                   onChange={(e) => setData((d) => ({ ...d, portalBalance: e.target.value }))} />
               </div>
@@ -920,19 +924,19 @@ export default function DailyReportPage() {
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
               {/* Cash sale and cash in hand (amounts only) */}
               <div className={cardCls + ' p-4 space-y-3'}>
-                <h2 className="text-sm font-semibold text-slate-800 dark:text-slate-100">Cash</h2>
+                <h2 className="text-sm font-semibold text-slate-800 dark:text-slate-100">{t('drCash')}</h2>
                 <div className="grid grid-cols-2 items-center gap-3">
-                  <label className="text-xs font-semibold text-slate-600 dark:text-slate-400">1. Opening cash in hand (₹)</label>
+                  <label className="text-xs font-semibold text-slate-600 dark:text-slate-400">{t('drOpeningCashLabel')}</label>
                   <input type="number" step="0.01" className={inputCls} value={data.openingCash}
                     onChange={(e) => setData((d) => ({ ...d, openingCash: e.target.value }))} />
                 </div>
                 <div className="grid grid-cols-2 items-center gap-3">
-                  <label className="text-xs font-semibold text-slate-600 dark:text-slate-400">2. Cash sale for the day (₹)</label>
+                  <label className="text-xs font-semibold text-slate-600 dark:text-slate-400">{t('drCashSaleDay')}</label>
                   <input type="number" step="0.01" className={inputCls} value={data.sales.cash}
                     onChange={(e) => setData((d) => ({ ...d, sales: { ...d.sales, cash: e.target.value } }))} />
                 </div>
                 <div className="grid grid-cols-2 items-center gap-3 pt-2 border-t border-slate-200 dark:border-slate-700">
-                  <label className="text-xs font-semibold text-slate-800 dark:text-slate-100">3. Closing cash in hand (1 + 2) (₹)</label>
+                  <label className="text-xs font-semibold text-slate-800 dark:text-slate-100">{t('drClosingCashLabel')}</label>
                   <div className={inputCls + ' font-bold tabular-nums bg-slate-50 dark:bg-slate-700/50'}>{fmtNum(totals.cashInHand)}</div>
                 </div>
               </div>
@@ -941,27 +945,27 @@ export default function DailyReportPage() {
               {/* Rates: sale rate and cost price, both dated */}
               <div className={cardCls + ' p-4 space-y-3'}>
                 <div className="flex items-center justify-between gap-2">
-                  <h2 className="text-sm font-semibold text-slate-800 dark:text-slate-100">Fuel Rates</h2>
+                  <h2 className="text-sm font-semibold text-slate-800 dark:text-slate-100">{t('drFuelRates')}</h2>
                   {canSetRates && !editingRates && (
-                    <button onClick={startEditRates} className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-3 py-1.5 rounded-lg">Edit rates</button>
+                    <button onClick={startEditRates} className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-3 py-1.5 rounded-lg">{t('drEditRates')}</button>
                   )}
                 </div>
-                {!canSetRates && <p className="text-xs text-slate-500">Only managers can change rates. Current rates are shown below.</p>}
+                {!canSetRates && <p className="text-xs text-slate-500">{t('drOnlyManagersRates')}</p>}
                 {canSetRates && editingRates && (
                   <div className="flex flex-wrap items-end gap-3">
                     <div>
-                      <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1">Applies from</label>
+                      <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1">{t('drAppliesFrom')}</label>
                       <input type="date" className={inputCls + ' w-44'} value={rateDate} onChange={(e) => setRateDate(e.target.value)} />
                     </div>
-                    <p className="text-[11px] text-slate-500">Only values you change are saved. Past days keep their rate and cost.</p>
+                    <p className="text-[11px] text-slate-500">{t('drRatesHelp')}</p>
                   </div>
                 )}
                 <table className="w-full text-sm">
                   <thead>
                     <tr>
                       {(editingRates
-                        ? ['Fuel', 'Sale rate (₹/L)', 'Cost price (₹/L)', 'In force: rate / cost (' + rateDate + ')']
-                        : ['Fuel', 'Sale rate (₹/L)', 'Cost price (₹/L)', 'Changed on']
+                        ? [t('drFuel'), t('drSaleRate'), t('drCostPrice'), t('drInForce').replace('{date}', rateDate)]
+                        : [t('drFuel'), t('drSaleRate'), t('drCostPrice'), t('drChangedOn')]
                       ).map((h) => <th key={h} className={thCls}>{h}</th>)}
                     </tr>
                   </thead>
@@ -982,7 +986,7 @@ export default function DailyReportPage() {
                                 onChange={(e) => setCostDraft((d) => ({ ...d, [f.id]: e.target.value }))} />
                             </td>
                             <td className={tdCls + ' tabular-nums text-xs text-slate-500'}>
-                              {inRate === null ? 'Rate not set' : fmtNum(inRate)} / {inCost === null ? 'cost not set' : fmtNum(inCost)}
+                              {inRate === null ? t('drRateNotSet') : fmtNum(inRate)} / {inCost === null ? t('drCostNotSet') : fmtNum(inCost)}
                             </td>
                           </tr>
                         );
@@ -993,8 +997,8 @@ export default function DailyReportPage() {
                       return (
                         <tr key={f.id}>
                           <td className={tdCls + ' font-semibold'}>{f.name}</td>
-                          <td className={tdCls + ' tabular-nums'}>{current === null ? <span className="text-red-600">Not set</span> : fmtNum(current)}</td>
-                          <td className={tdCls + ' tabular-nums'}>{cost === null ? <span className="text-slate-400">Not set</span> : fmtNum(cost)}</td>
+                          <td className={tdCls + ' tabular-nums'}>{current === null ? <span className="text-red-600">{t('drNotSet')}</span> : fmtNum(current)}</td>
+                          <td className={tdCls + ' tabular-nums'}>{cost === null ? <span className="text-slate-400">{t('drNotSet')}</span> : fmtNum(cost)}</td>
                           <td className={tdCls + ' text-xs text-slate-500'}>{row ? row.effective_from : '—'}</td>
                         </tr>
                       );
@@ -1003,8 +1007,8 @@ export default function DailyReportPage() {
                 </table>
                 {canSetRates && editingRates && (
                   <div className="flex justify-end gap-2 pt-1">
-                    <button onClick={() => setEditingRates(false)} className="text-xs font-semibold border border-slate-300 text-slate-600 hover:bg-slate-50 px-3 py-2 rounded-lg">Cancel</button>
-                    <button onClick={saveRates} className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-4 py-2 rounded-lg">Save rates</button>
+                    <button onClick={() => setEditingRates(false)} className="text-xs font-semibold border border-slate-300 text-slate-600 hover:bg-slate-50 px-3 py-2 rounded-lg">{t('drCancel')}</button>
+                    <button onClick={saveRates} className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-4 py-2 rounded-lg">{t('drSaveRates')}</button>
                   </div>
                 )}
               </div>
@@ -1014,16 +1018,16 @@ export default function DailyReportPage() {
             <div className={cardCls}>
               <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between">
                 <div>
-                  <h2 className="text-sm font-semibold text-slate-800 dark:text-slate-100">Tank Stock</h2>
-                  <p className="text-[11px] text-slate-500">Rename a tank (e.g. "Tank 1 MS") and pick its fuel.</p>
+                  <h2 className="text-sm font-semibold text-slate-800 dark:text-slate-100">{t('drTankStock')}</h2>
+                  <p className="text-[11px] text-slate-500">{t('drTankHelp')}</p>
                 </div>
                 <button onClick={() => setData((d) => ({ ...d, tanks: [...d.tanks, { id: uid(), name: `Tank ${d.tanks.length + 1}`, fuel: d.fuels[0]?.id || 'ms', dip: '', ltr: '' }] }))}
-                  className="flex items-center gap-1 text-xs font-semibold text-blue-600 hover:text-blue-700"><Plus size={13} /> Add tank</button>
+                  className="flex items-center gap-1 text-xs font-semibold text-blue-600 hover:text-blue-700"><Plus size={13} /> {t('drAddTank')}</button>
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-sm min-w-[760px]">
                   <thead>
-                    <tr>{['Tank', 'Fuel', 'Dip reading (mm)', 'Ltr stock', 'Tank capacity (L)', 'Empty capacity (L)', ''].map((h, i) => <th key={i} className={thCls}>{h}</th>)}</tr>
+                    <tr>{[t('drTank'), t('drFuel'), t('drDipReadingMm'), t('drLtrStock'), t('drTankCapL'), t('drEmptyCapL'), ''].map((h, i) => <th key={i} className={thCls}>{h}</th>)}</tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
                     {data.tanks.map((t) => (
@@ -1056,28 +1060,28 @@ export default function DailyReportPage() {
           {/* Hospital: day sales split into cash and UPI, with cash in hand */}
           {isHospitalSingle && (
             <div className={cardCls + ' p-4 space-y-3'}>
-              <h2 className="text-sm font-semibold text-slate-800 dark:text-slate-100">Sales &amp; Cash</h2>
+              <h2 className="text-sm font-semibold text-slate-800 dark:text-slate-100">{t('drSalesCash')}</h2>
               <div className="grid grid-cols-2 items-center gap-3">
-                <label className="text-xs font-semibold text-slate-600 dark:text-slate-400">Cash sales for the day (₹)</label>
+                <label className="text-xs font-semibold text-slate-600 dark:text-slate-400">{t('drCashSalesDay')}</label>
                 <input type="number" step="0.01" className={inputCls} value={data.sales.cash}
                   onChange={(e) => setData((d) => ({ ...d, sales: { ...d.sales, cash: e.target.value } }))} />
               </div>
               <div className="grid grid-cols-2 items-center gap-3">
-                <label className="text-xs font-semibold text-slate-600 dark:text-slate-400">UPI sales for the day (₹)</label>
+                <label className="text-xs font-semibold text-slate-600 dark:text-slate-400">{t('drUpiSalesDay')}</label>
                 <input type="number" step="0.01" className={inputCls} value={data.sales.upi}
                   onChange={(e) => setData((d) => ({ ...d, sales: { ...d.sales, upi: e.target.value } }))} />
               </div>
               <div className="grid grid-cols-2 items-center gap-3">
-                <label className="text-xs font-semibold text-slate-600 dark:text-slate-400">Total sales (₹)</label>
+                <label className="text-xs font-semibold text-slate-600 dark:text-slate-400">{t('drTotalSalesRs')}</label>
                 <p className="text-sm font-bold tabular-nums text-slate-900 dark:text-slate-100">{fmtMoney(totals.hospitalTotal)}</p>
               </div>
               <div className="grid grid-cols-2 items-center gap-3">
-                <label className="text-xs font-semibold text-slate-600 dark:text-slate-400">Opening cash in hand (₹)</label>
+                <label className="text-xs font-semibold text-slate-600 dark:text-slate-400">{t('drOpeningCashInHand')}</label>
                 <input type="number" step="0.01" className={inputCls} value={data.openingCash}
                   onChange={(e) => setData((d) => ({ ...d, openingCash: e.target.value }))} />
               </div>
               <div className="grid grid-cols-2 items-center gap-3 pt-2 border-t border-slate-200 dark:border-slate-700">
-                <label className="text-xs font-semibold text-slate-800 dark:text-slate-100">Closing cash in hand (opening + cash sales) (₹)</label>
+                <label className="text-xs font-semibold text-slate-800 dark:text-slate-100">{t('drClosingCashFormula')}</label>
                 <div className={inputCls + ' font-bold tabular-nums bg-slate-50 dark:bg-slate-700/50'}>{fmtNum(totals.cashInHand)}</div>
               </div>
             </div>
@@ -1087,16 +1091,16 @@ export default function DailyReportPage() {
           <div className={cardCls}>
             <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between">
               <div>
-                <h2 className="text-sm font-semibold text-slate-800 dark:text-slate-100">Expenses</h2>
-                <p className="text-[11px] text-slate-500">New lines are added under {defaultPerson || 'the assigned editor'}. Enter the amount paid, the amount still to pay, and a note (for example, bank details).</p>
+                <h2 className="text-sm font-semibold text-slate-800 dark:text-slate-100">{t('drExpenses')}</h2>
+                <p className="text-[11px] text-slate-500">{t('drExpensesHelp').replace('{person}', defaultPerson || t('drAssignedEditor'))}</p>
               </div>
               <button onClick={() => setData((d) => ({ ...d, expenses: [...d.expenses, { id: uid(), purpose: '', paidTo: '', amount: '', toPay: '', mode: 'cash', note: '', enteredBy: defaultPerson }] }))}
-                className="flex items-center gap-1 text-xs font-semibold text-blue-600 hover:text-blue-700"><Plus size={13} /> Add expense</button>
+                className="flex items-center gap-1 text-xs font-semibold text-blue-600 hover:text-blue-700"><Plus size={13} /> {t('drAddExpense')}</button>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-sm min-w-[1000px]">
                 <thead>
-                  <tr>{['Purpose', 'Paid to', 'Amount paid', 'Amount to pay', 'Balance', 'Paid by', 'Note', 'Entered by', ''].map((h, i) => <th key={i} className={thCls}>{h}</th>)}</tr>
+                  <tr>{[t('drPurpose'), t('drPaidTo'), t('drAmountPaid'), t('drAmountToPay'), t('drBalance'), t('drPaidBy'), t('drNote'), t('drEnteredBy'), ''].map((h, i) => <th key={i} className={thCls}>{h}</th>)}</tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
                   {data.expenses.map((e) => (
@@ -1110,8 +1114,8 @@ export default function DailyReportPage() {
                       </td>
                       <td className={tdCls}>
                         <select className={inputCls} value={e.mode} onChange={(ev) => setExpense(e.id, { mode: ev.target.value as 'cash' | 'online' })}>
-                          <option value="cash">Cash</option>
-                          <option value="online">Online</option>
+                          <option value="cash">{t('drCash')}</option>
+                          <option value="online">{t('drOnline')}</option>
                         </select>
                       </td>
                       <td className={tdCls}><input className={inputCls} value={e.note} onChange={(ev) => setExpense(e.id, { note: ev.target.value })} /></td>
@@ -1122,13 +1126,13 @@ export default function DailyReportPage() {
                     </tr>
                   ))}
                   {data.expenses.length === 0 && (
-                    <tr><td colSpan={9} className={tdCls + ' text-center text-slate-400 italic'}>No expenses for this day</td></tr>
+                    <tr><td colSpan={9} className={tdCls + ' text-center text-slate-400 italic'}>{t('drNoExpenses')}</td></tr>
                   )}
                 </tbody>
                 {data.expenses.length > 0 && (
                   <tfoot>
                     <tr className="bg-slate-50 dark:bg-slate-700/50 font-semibold">
-                      <td className={tdCls} colSpan={2}>Total</td>
+                      <td className={tdCls} colSpan={2}>{t('drTotal')}</td>
                       <td className={tdCls + ' text-right tabular-nums'}>{fmtMoney(totals.paid)}</td>
                       <td className={tdCls + ' text-right tabular-nums'}>{fmtMoney(totals.toPay)}</td>
                       <td className={tdCls + ' text-right tabular-nums'}>{fmtMoney(totals.balance)}</td>
@@ -1149,7 +1153,7 @@ export default function DailyReportPage() {
             <BarChart3 size={16} className="text-indigo-500" />
             <div>
               <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">
-                Trend{isAll ? ' · all firms' : ''} · {PERIODS.find((p) => p.id === period)?.label}
+                {t('drTrend')}{isAll ? t('drAllFirmsSuffix') : ''} · {t(PERIODS.find((p) => p.id === period)?.labelKey ?? 'drPeriodWeek')}
               </h2>
               <p className="text-xs text-slate-500">
                 {windowBuckets[0] && windowBuckets[windowBuckets.length - 1]
@@ -1162,19 +1166,19 @@ export default function DailyReportPage() {
             {period === 'custom' ? (
               <>
                 <div>
-                  <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1">From</label>
+                  <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1">{t('drFrom')}</label>
                   <input type="date" value={customFrom} onChange={(e) => e.target.value && setCustomFrom(e.target.value)}
                     className={inputCls + ' w-44'} />
                 </div>
                 <div>
-                  <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1">To</label>
+                  <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1">{t('drTo')}</label>
                   <input type="date" value={customTo} onChange={(e) => e.target.value && setCustomTo(e.target.value)}
                     className={inputCls + ' w-44'} />
                 </div>
               </>
             ) : (
               <div>
-                <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1">Chart date</label>
+                <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1">{t('drChartDate')}</label>
                 <input type="date" value={chartDate} onChange={(e) => e.target.value && setChartDate(e.target.value)}
                   className={inputCls + ' w-44'} />
               </div>
@@ -1183,7 +1187,7 @@ export default function DailyReportPage() {
               {PERIODS.map((p) => (
                 <button key={p.id} onClick={() => setPeriod(p.id)}
                   className={'px-3 py-1.5 text-xs font-semibold ' + (period === p.id ? 'bg-blue-600 text-white' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700')}>
-                  {p.label}
+                  {t(p.labelKey)}
                 </button>
               ))}
             </div>
@@ -1195,7 +1199,7 @@ export default function DailyReportPage() {
           <div className="space-y-6">
             {isAll ? (<>
               <div>
-                <p className="text-xs font-semibold text-slate-600 dark:text-slate-400 mb-2">Revenue, cash and expenses</p>
+                <p className="text-xs font-semibold text-slate-600 dark:text-slate-400 mb-2">{t('drCaptionRevCashExp')}</p>
                 <ResponsiveContainer width="100%" height={300}>
                   <BarChart data={trendRows} margin={{ top: 8, right: 8, left: 0, bottom: 0 }} barGap={0} barCategoryGap="15%">
                     <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
@@ -1212,7 +1216,7 @@ export default function DailyReportPage() {
               {!isHospitalSingle && (
                 <div className="grid grid-cols-1 gap-6">
                   <div>
-                    <p className="text-xs font-semibold text-slate-600 dark:text-slate-400 mb-2">Revenue by fuel (₹)</p>
+                    <p className="text-xs font-semibold text-slate-600 dark:text-slate-400 mb-2">{t('drCaptionRevFuelRs')}</p>
                     <ResponsiveContainer width="100%" height={260}>
                       <BarChart data={trendRows} margin={{ top: 8, right: 8, left: 0, bottom: 0 }} barGap={0} barCategoryGap="15%">
                         <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
@@ -1227,7 +1231,7 @@ export default function DailyReportPage() {
                     </ResponsiveContainer>
                   </div>
                   <div>
-                    <p className="text-xs font-semibold text-slate-600 dark:text-slate-400 mb-2">Litres sold by fuel (L)</p>
+                    <p className="text-xs font-semibold text-slate-600 dark:text-slate-400 mb-2">{t('drCaptionLitresFuel')}</p>
                     <ResponsiveContainer width="100%" height={260}>
                       <BarChart data={trendRows} margin={{ top: 8, right: 8, left: 0, bottom: 0 }} barGap={0} barCategoryGap="15%">
                         <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
@@ -1246,7 +1250,7 @@ export default function DailyReportPage() {
             </>) : (<>
               {isHospitalSingle ? (<>
                 <div>
-                  <p className="text-xs font-semibold text-slate-600 dark:text-slate-400 mb-2">Cash sales and UPI sales (bars), total sales (line)</p>
+                  <p className="text-xs font-semibold text-slate-600 dark:text-slate-400 mb-2">{t('drCaptionCashUpi')}</p>
                   <ResponsiveContainer width="100%" height={300}>
                     <ComposedChart data={trendRows} margin={{ top: 8, right: 8, left: 0, bottom: 0 }} barGap={0} barCategoryGap="15%">
                       <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
@@ -1254,14 +1258,14 @@ export default function DailyReportPage() {
                       <YAxis tick={{ fontSize: 11, fill: '#64748b' }} axisLine={false} tickLine={false} tickFormatter={(v) => `₹${Number(v) >= 1000 ? (Number(v) / 1000).toFixed(0) + 'k' : v}`} />
                       <Tooltip formatter={(v: number) => fmtMoney(v)} contentStyle={{ fontSize: 12, borderRadius: 8 }} />
                       <Legend wrapperStyle={{ fontSize: 12 }} />
-                      <Bar dataKey="cashSale" name="Cash sales" fill="#10b981" radius={[3, 3, 0, 0]} maxBarSize={40} />
-                      <Bar dataKey="upiSale" name="UPI sales" fill="#06b6d4" radius={[3, 3, 0, 0]} maxBarSize={40} />
-                      <Line type="monotone" dataKey="hospitalTotal" name="Total sales" stroke="#1e293b" strokeWidth={2} dot={{ r: 3 }} />
+                      <Bar dataKey="cashSale" name={t('drSerCashSales')} fill="#10b981" radius={[3, 3, 0, 0]} maxBarSize={40} />
+                      <Bar dataKey="upiSale" name={t('drSerUpiSales')} fill="#06b6d4" radius={[3, 3, 0, 0]} maxBarSize={40} />
+                      <Line type="monotone" dataKey="hospitalTotal" name={t('drSerTotalSales')} stroke="#1e293b" strokeWidth={2} dot={{ r: 3 }} />
                     </ComposedChart>
                   </ResponsiveContainer>
                 </div>
                 <div>
-                  <p className="text-xs font-semibold text-slate-600 dark:text-slate-400 mb-2">Expenses paid (line)</p>
+                  <p className="text-xs font-semibold text-slate-600 dark:text-slate-400 mb-2">{t('drCaptionExpenses')}</p>
                   <ResponsiveContainer width="100%" height={260}>
                     <LineChart data={trendRows} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
@@ -1269,14 +1273,14 @@ export default function DailyReportPage() {
                       <YAxis tick={{ fontSize: 11, fill: '#64748b' }} axisLine={false} tickLine={false} tickFormatter={(v) => `₹${Number(v) >= 1000 ? (Number(v) / 1000).toFixed(0) + 'k' : v}`} />
                       <Tooltip formatter={(v: number) => fmtMoney(v)} contentStyle={{ fontSize: 12, borderRadius: 8 }} />
                       <Legend wrapperStyle={{ fontSize: 12 }} />
-                      <Line type="monotone" dataKey="expensesPaid" name="Expenses paid" stroke="#f59e0b" strokeWidth={2} dot={{ r: 3 }} />
+                      <Line type="monotone" dataKey="expensesPaid" name={t('drSerExpensesPaid')} stroke="#f59e0b" strokeWidth={2} dot={{ r: 3 }} />
                     </LineChart>
                   </ResponsiveContainer>
                 </div>
               </>) : (<>
                 <div className="grid grid-cols-1 gap-6">
                   <div>
-                    <p className="text-xs font-semibold text-slate-600 dark:text-slate-400 mb-2">Opening cash and cash sale (bars), closing cash (line)</p>
+                    <p className="text-xs font-semibold text-slate-600 dark:text-slate-400 mb-2">{t('drCaptionOpening')}</p>
                     <ResponsiveContainer width="100%" height={260}>
                       <ComposedChart data={trendRows} margin={{ top: 8, right: 8, left: 0, bottom: 0 }} barGap={0} barCategoryGap="15%">
                         <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
@@ -1284,14 +1288,14 @@ export default function DailyReportPage() {
                         <YAxis tick={{ fontSize: 11, fill: '#64748b' }} axisLine={false} tickLine={false} tickFormatter={(v) => `₹${Number(v) >= 1000 ? (Number(v) / 1000).toFixed(0) + 'k' : v}`} />
                         <Tooltip formatter={(v: number) => fmtMoney(v)} contentStyle={{ fontSize: 12, borderRadius: 8 }} />
                         <Legend wrapperStyle={{ fontSize: 12 }} />
-                        <Bar dataKey="openingCash" name="Opening cash" fill="#6366f1" radius={[3, 3, 0, 0]} maxBarSize={40} />
-                        <Bar dataKey="cashSale" name="Cash sale" fill="#10b981" radius={[3, 3, 0, 0]} maxBarSize={40} />
-                        <Line type="monotone" dataKey="cashInHand" name="Closing cash" stroke="#8b5cf6" strokeWidth={2} dot={{ r: 3 }} />
+                        <Bar dataKey="openingCash" name={t('drSerOpeningCash')} fill="#6366f1" radius={[3, 3, 0, 0]} maxBarSize={40} />
+                        <Bar dataKey="cashSale" name={t('drSerCashSale')} fill="#10b981" radius={[3, 3, 0, 0]} maxBarSize={40} />
+                        <Line type="monotone" dataKey="cashInHand" name={t('drSerClosingCash')} stroke="#8b5cf6" strokeWidth={2} dot={{ r: 3 }} />
                       </ComposedChart>
                     </ResponsiveContainer>
                   </div>
                   <div>
-                    <p className="text-xs font-semibold text-slate-600 dark:text-slate-400 mb-2">Capital: closing cash, portal balance and stock at cost (bars), capital (line). ★ = fuel purchased</p>
+                    <p className="text-xs font-semibold text-slate-600 dark:text-slate-400 mb-2">{t('drCaptionCapital')}</p>
                     <ResponsiveContainer width="100%" height={280}>
                       <ComposedChart data={trendRows} margin={{ top: 8, right: 8, left: 0, bottom: 0 }} barGap={0} barCategoryGap="15%">
                         <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
@@ -1299,16 +1303,16 @@ export default function DailyReportPage() {
                         <YAxis tick={{ fontSize: 11, fill: '#64748b' }} axisLine={false} tickLine={false} tickFormatter={(v) => `₹${Number(v) >= 1000 ? (Number(v) / 1000).toFixed(0) + 'k' : v}`} />
                         <Tooltip formatter={(v: number) => fmtMoney(v)} contentStyle={{ fontSize: 12, borderRadius: 8 }} />
                         <Legend wrapperStyle={{ fontSize: 12 }} />
-                        <Bar dataKey="capCash" name="Closing cash" fill="#10b981" radius={[3, 3, 0, 0]} maxBarSize={40} />
-                        <Bar dataKey="capPortal" name="Portal balance" fill="#06b6d4" radius={[3, 3, 0, 0]} maxBarSize={40} />
-                        <Bar dataKey="capStock" name="Stock at cost" fill="#f59e0b" radius={[3, 3, 0, 0]} maxBarSize={40} />
-                        <Line type="monotone" dataKey="capital" name="Capital" stroke="#8b5cf6" strokeWidth={2} dot={{ r: 3 }} />
-                        <Line dataKey="purchaseMarker" name="Fuel purchased" stroke="none" dot={PurchaseStar} activeDot={false} legendType="star" />
+                        <Bar dataKey="capCash" name={t('drSerClosingCash')} fill="#10b981" radius={[3, 3, 0, 0]} maxBarSize={40} />
+                        <Bar dataKey="capPortal" name={t('drSerPortalBalance')} fill="#06b6d4" radius={[3, 3, 0, 0]} maxBarSize={40} />
+                        <Bar dataKey="capStock" name={t('drSerStockAtCost')} fill="#f59e0b" radius={[3, 3, 0, 0]} maxBarSize={40} />
+                        <Line type="monotone" dataKey="capital" name={t('drCapital')} stroke="#8b5cf6" strokeWidth={2} dot={{ r: 3 }} />
+                        <Line dataKey="purchaseMarker" name={t('drSerFuelPurchased')} stroke="none" dot={PurchaseStar} activeDot={false} legendType="star" />
                       </ComposedChart>
                     </ResponsiveContainer>
                   </div>
                   <div>
-                    <p className="text-xs font-semibold text-slate-600 dark:text-slate-400 mb-2">Expenses paid (line)</p>
+                    <p className="text-xs font-semibold text-slate-600 dark:text-slate-400 mb-2">{t('drCaptionExpenses')}</p>
                     <ResponsiveContainer width="100%" height={260}>
                       <LineChart data={trendRows} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
@@ -1316,14 +1320,14 @@ export default function DailyReportPage() {
                         <YAxis tick={{ fontSize: 11, fill: '#64748b' }} axisLine={false} tickLine={false} tickFormatter={(v) => `₹${Number(v) >= 1000 ? (Number(v) / 1000).toFixed(0) + 'k' : v}`} />
                         <Tooltip formatter={(v: number) => fmtMoney(v)} contentStyle={{ fontSize: 12, borderRadius: 8 }} />
                         <Legend wrapperStyle={{ fontSize: 12 }} />
-                        <Line type="monotone" dataKey="expensesPaid" name="Expenses paid" stroke="#f59e0b" strokeWidth={2} dot={{ r: 3 }} />
+                        <Line type="monotone" dataKey="expensesPaid" name={t('drSerExpensesPaid')} stroke="#f59e0b" strokeWidth={2} dot={{ r: 3 }} />
                       </LineChart>
                     </ResponsiveContainer>
                   </div>
                 </div>
                 <div className="grid grid-cols-1 gap-6">
                   <div>
-                    <p className="text-xs font-semibold text-slate-600 dark:text-slate-400 mb-2">Litres sold by fuel (bars), total litres (line)</p>
+                    <p className="text-xs font-semibold text-slate-600 dark:text-slate-400 mb-2">{t('drCaptionLitresTotal')}</p>
                     <ResponsiveContainer width="100%" height={280}>
                       <ComposedChart data={trendRows} margin={{ top: 8, right: 8, left: 0, bottom: 0 }} barGap={0} barCategoryGap="15%">
                         <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
@@ -1334,12 +1338,12 @@ export default function DailyReportPage() {
                         {fuelNames.map((n, i) => (
                           <Bar key={`lit${i}`} dataKey={`lit${i}`} name={n} fill={COLORS[i % COLORS.length]} radius={[3, 3, 0, 0]} maxBarSize={24} />
                         ))}
-                        <Line type="monotone" dataKey="litTotal" name="Total litres" stroke="#1e293b" strokeWidth={2} dot={{ r: 3 }} />
+                        <Line type="monotone" dataKey="litTotal" name={t('drSerTotalLitres')} stroke="#1e293b" strokeWidth={2} dot={{ r: 3 }} />
                       </ComposedChart>
                     </ResponsiveContainer>
                   </div>
                   <div>
-                    <p className="text-xs font-semibold text-slate-600 dark:text-slate-400 mb-2">Revenue by fuel (bars), total revenue (line)</p>
+                    <p className="text-xs font-semibold text-slate-600 dark:text-slate-400 mb-2">{t('drCaptionRevTotal')}</p>
                     <ResponsiveContainer width="100%" height={280}>
                       <ComposedChart data={trendRows} margin={{ top: 8, right: 8, left: 0, bottom: 0 }} barGap={0} barCategoryGap="15%">
                         <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
@@ -1350,15 +1354,15 @@ export default function DailyReportPage() {
                         {fuelNames.map((n, i) => (
                           <Bar key={`rev${i}`} dataKey={`rev${i}`} name={n} fill={COLORS[i % COLORS.length]} radius={[3, 3, 0, 0]} maxBarSize={24} />
                         ))}
-                        <Line type="monotone" dataKey="revenue" name="Total revenue" stroke="#1e293b" strokeWidth={2} dot={{ r: 3 }} />
+                        <Line type="monotone" dataKey="revenue" name={t('drSerTotalRevenue')} stroke="#1e293b" strokeWidth={2} dot={{ r: 3 }} />
                       </ComposedChart>
                     </ResponsiveContainer>
                   </div>
                 </div>
                 <div>
-                  <p className="text-xs font-semibold text-slate-600 dark:text-slate-400 mb-2">Tank stock (litres, latest saved day in each period)</p>
+                  <p className="text-xs font-semibold text-slate-600 dark:text-slate-400 mb-2">{t('drCaptionTankStock')}</p>
                   {tankNames.length === 0 ? (
-                    <p className="text-xs text-slate-400 italic py-10 text-center">No tank readings saved in this period yet</p>
+                    <p className="text-xs text-slate-400 italic py-10 text-center">{t('drNoTankReadings')}</p>
                   ) : (
                     <ResponsiveContainer width="100%" height={280}>
                       <BarChart data={trendRows} margin={{ top: 8, right: 8, left: 0, bottom: 0 }} barGap={0} barCategoryGap="15%">
@@ -1381,7 +1385,7 @@ export default function DailyReportPage() {
       </div>
 
       <p className="text-xs text-slate-400">
-        Fuel and tank names can be changed at any time. Rates are set by managers and apply from the date chosen; past days keep the rate they were saved with.
+        {t('drFooterNote')}
       </p>
     </div>
   );

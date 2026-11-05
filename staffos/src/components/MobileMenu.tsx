@@ -9,7 +9,7 @@ import {
   Shield, Download, Smartphone, Palmtree, Ticket, Receipt, Command,
   Navigation, ClipboardList, Building2, SlidersHorizontal,
   AlertTriangle, ScrollText, BookMarked, LogOut, ChevronRight,
-  CheckSquare, ListTodo, Repeat, PieChart, Briefcase
+  CheckSquare, Repeat, PieChart, Briefcase, TrendingUp
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
@@ -24,52 +24,57 @@ interface NavItem {
   icon: React.ElementType;
   href: string;
   group: string;
+  managerOnly?: boolean;
+  directorOrManagerOnly?: boolean;
 }
 
+// Same items, order and groups as the desktop Sidebar (src/components/Sidebar.tsx).
 const navItems: NavItem[] = [
   { id: 'nav-dashboard', label: 'My Dashboard', icon: LayoutDashboard, href: '/employee-dashboard', group: 'core' },
   { id: 'nav-attendance', label: 'Attendance', icon: Clock, href: '/attendance-records', group: 'core' },
+  { id: 'nav-audit', label: 'Attendance Audit', icon: ClipboardList, href: '/attendance-audit', group: 'core', managerOnly: true },
   { id: 'nav-leave', label: 'Leave Dashboard', icon: CalendarDays, href: '/leave-management', group: 'core' },
-  { id: 'nav-holidays', label: 'Holiday Management', icon: Palmtree, href: '/holiday-management', group: 'core' },
+  { id: 'nav-leave-admin', label: 'Leave Admin', icon: BookMarked, href: '/leave-admin', group: 'core', managerOnly: true },
+  { id: 'nav-holidays', label: 'Holiday Management', icon: Palmtree, href: '/holiday-management', group: 'core', managerOnly: true },
   { id: 'nav-payroll', label: 'Payroll', icon: Wallet, href: '/payroll', group: 'core' },
   { id: 'nav-profile', label: 'My Profile', icon: UserCircle, href: '/employee-profile', group: 'core' },
-  { id: 'nav-my-tasks', label: 'My Tasks', icon: ListTodo, href: '/my-tasks', group: 'tasks' },
-  { id: 'nav-task-management', label: 'Task Management', icon: ListTodo, href: '/task-management', group: 'tasks' },
+
   { id: 'nav-all-tasks', label: 'All Tasks', icon: CheckSquare, href: '/all-tasks', group: 'tasks' },
   { id: 'nav-recurring-tasks', label: 'Recurring Tasks', icon: Repeat, href: '/recurring-tasks', group: 'tasks' },
-  { id: 'nav-task-analytics', label: 'Task Analytics', icon: PieChart, href: '/task-analytics', group: 'tasks' },
+  { id: 'nav-task-analytics', label: 'Task Analytics', icon: PieChart, href: '/task-analytics', group: 'tasks', managerOnly: true },
+
   { id: 'nav-calendar', label: 'Calendar', icon: CalendarDays, href: '/calendar', group: 'collaborate' },
+  { id: 'nav-chat', label: 'Chat', icon: MessageSquare, href: '/chat', group: 'collaborate' },
   { id: 'nav-tickets', label: 'Ticket Centre', icon: Ticket, href: '/ticket-centre', group: 'collaborate' },
   { id: 'nav-expenses', label: 'Expense Centre', icon: Receipt, href: '/expense-centre', group: 'collaborate' },
+  { id: 'nav-clients', label: 'Clients', icon: Briefcase, href: '/clients', group: 'collaborate', directorOrManagerOnly: true },
   { id: 'nav-discrepancy', label: 'Client Discrepancies', icon: AlertTriangle, href: '/client-discrepancy-reports', group: 'collaborate' },
-  { id: 'nav-clients', label: 'Clients', icon: Briefcase, href: '/clients', group: 'collaborate' },
-  { id: 'nav-chat', label: 'Chat', icon: MessageSquare, href: '/chat', group: 'collaborate' },
+
   { id: 'nav-docs', label: 'Documents', icon: BookOpen, href: '/documents', group: 'resources' },
-  { id: 'nav-analytics', label: 'Analytics', icon: BarChart3, href: '/analytics-reporting-dashboard', group: 'management' },
-  { id: 'nav-reports', label: 'Reports', icon: FileText, href: '/reports', group: 'management' },
-  { id: 'nav-daily-report', label: 'Daily Report', icon: ClipboardList, href: '/daily-report', group: 'management' },
-  { id: 'nav-user-mgmt', label: 'User Management', icon: UserCog, href: '/user-management', group: 'management' },
-  { id: 'nav-live-map', label: 'Live Locations', icon: Navigation, href: '/live-location-map', group: 'management' },
-  { id: 'nav-audit', label: 'Attendance Audit', icon: ClipboardList, href: '/attendance-audit', group: 'management' },
-  { id: 'nav-audit-log', label: 'Audit Log', icon: ScrollText, href: '/audit-log', group: 'management' },
-  { id: 'nav-leave-admin', label: 'Leave Admin', icon: BookMarked, href: '/leave-admin', group: 'management' },
-  { id: 'nav-command-hub', label: 'Command Hub', icon: Command, href: '/director-command-hub', group: 'oversight' },
-  { id: 'nav-director', label: 'Director Panel', icon: Crown, href: '/director-control-panel', group: 'oversight' },
-  { id: 'nav-firm-config', label: 'Firm Configuration', icon: Building2, href: '/firm-configuration', group: 'oversight' },
-  { id: 'nav-settings', label: 'Director Settings', icon: Shield, href: '/director-settings', group: 'oversight' },
-  { id: 'nav-app-settings', label: 'App Settings', icon: SlidersHorizontal, href: '/app-settings', group: 'oversight' },
+  { id: 'nav-daily-report', label: 'Daily Report', icon: ClipboardList, href: '/daily-report', group: 'resources' },
+  { id: 'nav-user-mgmt', label: 'User Management', icon: UserCog, href: '/user-management', group: 'resources', managerOnly: true },
+  { id: 'nav-app-settings', label: 'App Settings', icon: SlidersHorizontal, href: '/app-settings', group: 'resources' },
+
+  { id: 'nav-command-hub', label: 'Command Hub', icon: Command, href: '/director-command-hub', group: 'director_only' },
+  { id: 'nav-director', label: 'Director Panel', icon: Crown, href: '/director-control-panel', group: 'director_only' },
+  { id: 'nav-firm-config', label: 'Firm Configuration', icon: Building2, href: '/firm-configuration', group: 'director_only' },
+  { id: 'nav-firm-reports', label: 'Firm Reports', icon: TrendingUp, href: '/firm-reports', group: 'director_only' },
+  { id: 'nav-reports', label: 'Reports', icon: FileText, href: '/reports', group: 'director_only' },
+  { id: 'nav-analytics', label: 'Analytics', icon: BarChart3, href: '/analytics-reporting-dashboard', group: 'director_only' },
+  { id: 'nav-audit-log', label: 'Audit Log', icon: ScrollText, href: '/audit-log', group: 'director_only' },
+  { id: 'nav-live-map', label: 'Live Locations', icon: Navigation, href: '/live-location-map', group: 'director_only' },
+  { id: 'nav-settings', label: 'Director Settings', icon: Shield, href: '/director-settings', group: 'director_only' },
 ];
 
 // Quick access items shown as icon grid at top of mobile menu
-const quickAccessIds = ['nav-dashboard', 'nav-attendance', 'nav-leave', 'nav-my-tasks', 'nav-chat', 'nav-profile'];
+const quickAccessIds = ['nav-dashboard', 'nav-attendance', 'nav-leave', 'nav-all-tasks', 'nav-chat', 'nav-profile'];
 
 const groups = [
   { id: 'core', label: 'Workspace' },
   { id: 'tasks', label: 'Tasks' },
   { id: 'collaborate', label: 'Collaborate' },
   { id: 'resources', label: 'Resources' },
-  { id: 'management', label: 'Management' },
-  { id: 'oversight', label: 'Oversight' },
+  { id: 'director_only', label: 'Director Only' },
 ];
 
 interface MobileMenuProps {
@@ -156,44 +161,43 @@ export default function MobileMenu({ isOpen, activePath, onClose }: MobileMenuPr
     const labelMap: Record<string, string> = {
       'nav-dashboard': t('myDashboard'),
       'nav-attendance': t('attendance'),
-      'nav-leave': t('leaveDashboard'),
+      'nav-leave': t('leaveHolidays'),
       'nav-holidays': t('holidayManagement'),
       'nav-payroll': t('payroll'),
       'nav-profile': t('myProfile'),
-      'nav-my-tasks': t('myTasks'),
+      'nav-audit': t('attendanceAudit'),
+      'nav-leave-admin': t('leaveAdmin'),
       'nav-all-tasks': t('allTasks'),
-      'nav-task-management': 'Task Management',
-      'nav-clients': 'Clients',
       'nav-recurring-tasks': t('recurringTasks'),
       'nav-task-analytics': t('taskAnalytics'),
       'nav-calendar': t('calendar'),
       'nav-tickets': t('ticketCentre'),
       'nav-expenses': t('expenseCentre'),
       'nav-chat': t('chat'),
+      'nav-clients': t('clients'),
+      'nav-discrepancy': t('clientDiscrepancies'),
       'nav-docs': t('documents'),
-      'nav-analytics': t('analytics'),
-      'nav-reports': t('reports'),
+      'nav-daily-report': t('dailyReport'),
       'nav-user-mgmt': t('userManagement'),
-      'nav-live-map': t('liveLocations'),
-      'nav-audit': t('attendanceAudit'),
-      'nav-audit-log': t('auditLog'),
-      'nav-leave-admin': t('leaveAdmin'),
+      'nav-app-settings': t('appSettings'),
       'nav-command-hub': t('commandHub'),
       'nav-director': t('directorPanel'),
       'nav-firm-config': t('firmConfiguration'),
+      'nav-firm-reports': t('firmReports'),
+      'nav-reports': t('reports'),
+      'nav-analytics': t('analytics'),
+      'nav-audit-log': t('auditLog'),
+      'nav-live-map': t('liveLocations'),
       'nav-settings': t('directorSettings'),
-      'nav-app-settings': t('appSettings'),
-      'nav-discrepancy': t('clientDiscrepancies'),
     };
     return labelMap[item.id] || item.label;
   };
 
-  const filteredNavItems = navItems.filter((item) => {
-    const mgmtOnly = ['nav-live-map', 'nav-audit', 'nav-leave-admin', 'nav-holidays'];
-    if (mgmtOnly.includes(item.id)) return isManagerOrDirector;
-    if (['nav-task-management', 'nav-clients'].includes(item.id)) return role === 'director' || role === 'manager';
-    if (item.id === 'nav-daily-report') return dailyReportAccess;
-    if (['nav-analytics', 'nav-reports', 'nav-audit-log'].includes(item.id)) return role === 'director';
+  const filteredNavItems = navItems.filter((n) => {
+    if (n.managerOnly) return isManagerOrDirector;
+    if (n.directorOrManagerOnly) return role === 'director' || role === 'manager';
+    if (n.id === 'nav-daily-report') return dailyReportAccess;
+    if (n.group === 'director_only') return role === 'director';
     return true;
   });
 
@@ -267,8 +271,7 @@ export default function MobileMenu({ isOpen, activePath, onClose }: MobileMenuPr
             : group.id === 'tasks' ? t('tasksGroup')
             : group.id === 'collaborate' ? t('collaborate')
             : group.id === 'resources' ? t('resources')
-            : group.id === 'management' ? t('management')
-            : t('oversight');
+            : t('directorOnly');
 
           return (
             <div key={group.id} className="mb-4">

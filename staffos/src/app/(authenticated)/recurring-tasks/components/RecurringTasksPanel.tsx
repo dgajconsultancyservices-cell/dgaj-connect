@@ -9,6 +9,7 @@ import { toast, Toaster } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
 import { createClient } from '@/lib/supabase/client';
 import InstanceSubtasks from '@/components/InstanceSubtasks';
+import { useLanguage } from '@/contexts/LanguageContext';
 
 type Frequency = 'daily' | 'weekday' | 'weekly' | 'fortnightly' | 'bi-monthly' | 'monthly' | 'quarterly' | 'yearly' | 'custom';
 type InstanceStatus = 'pending' | 'in_progress' | 'completed' | 'overdue' | 'cancelled';
@@ -60,23 +61,9 @@ interface TaskInstance {
 
 interface UserOption { id: string; full_name: string; role: string; department: string | null; firm_id?: string | null; }
 
-const FREQUENCY_LABELS: Record<Frequency, string> = {
-  daily: 'Daily', weekday: 'Weekdays only', weekly: 'Weekly', fortnightly: 'Fortnightly',
-  'bi-monthly': 'Bi-monthly (15th & month-end)', monthly: 'Monthly', quarterly: 'Quarterly',
-  yearly: 'Yearly', custom: 'Custom interval',
-};
-
 const PRIORITY_STYLE: Record<Priority, string> = {
   critical: 'bg-red-100 text-red-700', high: 'bg-orange-100 text-orange-700',
   medium: 'bg-amber-100 text-amber-700', low: 'bg-slate-100 text-slate-600',
-};
-
-const STATUS_STYLE: Record<InstanceStatus, { label: string; className: string; icon: React.ElementType }> = {
-  pending: { label: 'Pending', className: 'bg-slate-100 text-slate-600', icon: Circle },
-  in_progress: { label: 'In progress', className: 'bg-blue-100 text-blue-700', icon: PlayCircle },
-  completed: { label: 'Completed', className: 'bg-emerald-100 text-emerald-700', icon: CheckCircle2 },
-  overdue: { label: 'Overdue', className: 'bg-red-100 text-red-700', icon: AlertTriangle },
-  cancelled: { label: 'Cancelled', className: 'bg-slate-100 text-slate-400', icon: X },
 };
 
 // Local calendar date as YYYY-MM-DD (toISOString() is UTC and shows yesterday in India before 5:30 am)
@@ -96,6 +83,21 @@ const emptyForm = {
 export default function RecurringTasksPanel() {
   const { effectiveUserId } = useAuth();
   const supabase = createClient();
+  const { t: tr } = useLanguage();
+
+  const FREQUENCY_LABELS: Record<Frequency, string> = {
+    daily: tr('rtFreqDaily'), weekday: tr('rtFreqWeekdays'), weekly: tr('rtFreqWeekly'), fortnightly: tr('rtFreqFortnightly'),
+    'bi-monthly': tr('rtFreqBiMonthly'), monthly: tr('rtFreqMonthly'), quarterly: tr('rtFreqQuarterly'),
+    yearly: tr('rtFreqYearly'), custom: tr('rtFreqCustom'),
+  };
+
+  const STATUS_STYLE: Record<InstanceStatus, { label: string; className: string; icon: React.ElementType }> = {
+    pending: { label: tr('rtStatusPending'), className: 'bg-slate-100 text-slate-600', icon: Circle },
+    in_progress: { label: tr('rtStatusInProgress'), className: 'bg-blue-100 text-blue-700', icon: PlayCircle },
+    completed: { label: tr('rtStatusCompleted'), className: 'bg-emerald-100 text-emerald-700', icon: CheckCircle2 },
+    overdue: { label: tr('rtStatusOverdue'), className: 'bg-red-100 text-red-700', icon: AlertTriangle },
+    cancelled: { label: tr('rtStatusCancelled'), className: 'bg-slate-100 text-slate-400', icon: X },
+  };
 
   const [tab, setTab] = useState<'templates' | 'instances'>('templates');
   const [role, setRole] = useState<string>('employee');
@@ -253,8 +255,8 @@ export default function RecurringTasksPanel() {
   };
 
   const handleSave = async () => {
-    if (!form.title.trim()) { toast.error('Title is required'); return; }
-    if (form.assigned_to_users.length === 0) { toast.error('Assign at least one person'); return; }
+    if (!form.title.trim()) { toast.error(tr('rtTitleRequired')); return; }
+    if (form.assigned_to_users.length === 0) { toast.error(tr('rtAssignAtLeastOne')); return; }
     // Guard against accidental duplicates: a new template with the same title and start date
     if (!editingId) {
       const { data: dup } = await supabase
@@ -264,7 +266,7 @@ export default function RecurringTasksPanel() {
         .eq('start_date', form.start_date)
         .eq('is_active', true)
         .limit(1);
-      if (dup && dup.length > 0 && !window.confirm(`An active recurring task "${form.title.trim()}" starting ${form.start_date} already exists. Create another one?`)) return;
+      if (dup && dup.length > 0 && !window.confirm(tr('rtDuplicateConfirm').replace('{title}', form.title.trim()).replace('{date}', form.start_date))) return;
     }
     setSaving(true);
     try {
@@ -303,12 +305,12 @@ export default function RecurringTasksPanel() {
       if (editingId) {
         const { error } = await supabase.from('recurring_tasks').update(payload).eq('id', editingId);
         if (error) throw error;
-        toast.success('Recurring task updated');
+        toast.success(tr('rtRecurringTaskUpdated'));
       } else {
         const { data, error } = await supabase.from('recurring_tasks').insert(payload).select('id').single();
         if (error) throw error;
         taskId = data.id;
-        toast.success('Recurring task created');
+        toast.success(tr('rtRecurringTaskCreated'));
       }
 
       // Save subtasks: update kept ones (keeps their id and progress), insert new, delete removed
@@ -356,14 +358,14 @@ export default function RecurringTasksPanel() {
           p_from_date: form.start_date,
           p_to_date: scheduleHorizon(form.end_date || null),
         });
-        if (genErr) throw new Error(`Saved, but occurrences were not generated: ${genErr.message}`);
+        if (genErr) throw new Error(tr('rtSavedNotGenerated').replace('{message}', genErr.message));
       }
 
       setShowForm(false);
       resetForm();
       await Promise.all([fetchTemplates(), fetchInstances()]);
     } catch (err: any) {
-      toast.error(err.message || 'Failed to save recurring task');
+      toast.error(err.message || tr('rtFailedSave'));
     } finally {
       setSaving(false);
     }
@@ -371,16 +373,16 @@ export default function RecurringTasksPanel() {
 
   const toggleActive = async (t: RecurringTask) => {
     const { error } = await supabase.from('recurring_tasks').update({ is_active: !t.is_active }).eq('id', t.id);
-    if (error) { toast.error('Failed to update'); return; }
-    toast.success(t.is_active ? 'Paused' : 'Activated');
+    if (error) { toast.error(tr('rtFailedUpdate')); return; }
+    toast.success(t.is_active ? tr('rtPaused') : tr('rtActivated'));
     fetchTemplates();
   };
 
   const deleteTemplate = async (t: RecurringTask) => {
-    if (!confirm(`Delete "${t.title}"? This also removes its scheduled instances.`)) return;
+    if (!confirm(tr('rtDeleteConfirm').replace('{title}', t.title))) return;
     const { error } = await supabase.from('recurring_tasks').delete().eq('id', t.id);
-    if (error) { toast.error('Failed to delete'); return; }
-    toast.success('Recurring task deleted');
+    if (error) { toast.error(tr('rtFailedDelete')); return; }
+    toast.success(tr('rtRecurringTaskDeleted'));
     fetchTemplates();
     fetchInstances();
   };
@@ -412,14 +414,14 @@ export default function RecurringTasksPanel() {
           .limit(1);
         const lastDue = last?.[0]?.due_date;
         toast.info(lastDue
-          ? `Nothing new to create: occurrences already exist up to ${lastDue}${t.end_date ? ` (repeat-up-to ${t.end_date})` : ''}`
-          : 'No occurrences were created. Check the start date, frequency and assignees.');
+          ? tr('rtNothingNewUpTo').replace('{date}', lastDue) + (t.end_date ? tr('rtRepeatUpToSuffix').replace('{date}', t.end_date) : '')
+          : tr('rtNoOccurrencesCreated'));
       } else {
-        toast.success(`Generated ${data} new instance(s) up to ${t.end_date || 'one year ahead'}`);
+        toast.success(tr('rtGeneratedUpTo').replace('{count}', String(data)).replace('{date}', t.end_date || tr('rtOneYearAhead')));
       }
       fetchInstances();
     } catch (err: any) {
-      toast.error(err.message || 'Failed to generate instances');
+      toast.error(err.message || tr('rtFailedGenerate'));
     } finally {
       setGeneratingId(null);
     }
@@ -430,10 +432,10 @@ export default function RecurringTasksPanel() {
     try {
       const { data, error } = await supabase.rpc('generate_all_recurring_instances', { p_days_ahead: 365 });
       if (error) throw error;
-      toast.success(`Generated ${data ?? 0} instance(s) across all active recurring tasks`);
+      toast.success(tr('rtGeneratedAll').replace('{count}', String(data ?? 0)));
       fetchInstances();
     } catch (err: any) {
-      toast.error(err.message || 'Failed to run bulk generation');
+      toast.error(err.message || tr('rtFailedBulk'));
     } finally {
       setGeneratingId(null);
     }
@@ -443,8 +445,8 @@ export default function RecurringTasksPanel() {
     const payload: Record<string, any> = { status };
     if (status === 'completed') payload.completion_datetime = new Date().toISOString();
     const { error } = await supabase.from('recurring_task_instances').update(payload).eq('id', inst.id);
-    if (error) { toast.error('Failed to update task'); return; }
-    toast.success(status === 'completed' ? 'Marked complete ✅' : 'Status updated');
+    if (error) { toast.error(tr('rtFailedUpdateTask')); return; }
+    toast.success(status === 'completed' ? tr('rtMarkedComplete') : tr('rtStatusUpdated'));
     fetchInstances();
   };
 
@@ -482,15 +484,15 @@ export default function RecurringTasksPanel() {
 
   const filterSelects = (
     <>
-      {selectBox(firmFilter, setFirmFilter, 'All firms', firmOptions.map((f) => ({ value: f.id, label: f.name })))}
-      {selectBox(employeeFilter, setEmployeeFilter, 'All employees', allUsers.map((u) => ({ value: u.id, label: u.full_name })))}
-      {selectBox(clientFilter, setClientFilter, 'All clients', clientOrgs.map((c) => ({ value: c.id, label: c.name })))}
-      {selectBox(priorityFilter, (v) => setPriorityFilter(v as 'all' | Priority), 'All priorities',
+      {selectBox(firmFilter, setFirmFilter, tr('rtAllFirms'), firmOptions.map((f) => ({ value: f.id, label: f.name })))}
+      {selectBox(employeeFilter, setEmployeeFilter, tr('rtAllEmployees'), allUsers.map((u) => ({ value: u.id, label: u.full_name })))}
+      {selectBox(clientFilter, setClientFilter, tr('rtAllClients'), clientOrgs.map((c) => ({ value: c.id, label: c.name })))}
+      {selectBox(priorityFilter, (v) => setPriorityFilter(v as 'all' | Priority), tr('rtAllPriorities'),
         (Object.keys(PRIORITY_STYLE) as Priority[]).map((p) => ({ value: p, label: p.charAt(0).toUpperCase() + p.slice(1) })))}
     </>
   );
 
-  const userName = (id: string) => allUsers.find((u) => u.id === id)?.full_name || 'Unknown';
+  const userName = (id: string) => allUsers.find((u) => u.id === id)?.full_name || tr('rtUnknown');
 
   return (
     <div className="max-w-screen-2xl mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-6">
@@ -499,10 +501,10 @@ export default function RecurringTasksPanel() {
       <div className="flex items-start justify-between gap-3 mb-5 flex-wrap">
         <div>
           <h1 className="text-xl sm:text-2xl font-700 text-slate-900 dark:text-slate-100 flex items-center gap-2">
-            <Repeat size={22} className="text-blue-600" /> Recurring Tasks
+            <Repeat size={22} className="text-blue-600" /> {tr('rtRecurringTasks')}
           </h1>
           <p className="text-slate-500 dark:text-slate-400 text-xs sm:text-sm mt-1">
-            Automatically schedule repeating work — daily standups, monthly compliance filings, weekly reports, and more.
+            {tr('rtPageSubtitle')}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -512,12 +514,12 @@ export default function RecurringTasksPanel() {
               disabled={generatingId === 'all'}
               className="flex items-center gap-1.5 py-2 px-3 rounded-xl border border-slate-200 dark:border-slate-600 text-xs sm:text-sm font-600 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors disabled:opacity-50"
             >
-              <RefreshCw size={14} className={generatingId === 'all' ? 'animate-spin' : ''} /> Generate all (30d)
+              <RefreshCw size={14} className={generatingId === 'all' ? 'animate-spin' : ''} /> {tr('rtGenerateAll')}
             </button>
           )}
           {isManager && (
             <button onClick={() => { resetForm(); setShowForm(true); }} className="btn-primary flex items-center gap-1.5 py-2 px-3 text-xs sm:text-sm">
-              <Plus size={16} /> New recurring task
+              <Plus size={16} /> {tr('rtNewRecurringTask')}
             </button>
           )}
         </div>
@@ -529,23 +531,23 @@ export default function RecurringTasksPanel() {
           onClick={() => setTab('templates')}
           className={`px-4 py-2.5 text-sm font-600 border-b-2 transition-colors ${tab === 'templates' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
         >
-          Templates ({templates.length})
+          {tr('rtTemplates')} ({templates.length})
         </button>
         <button
           onClick={() => setTab('instances')}
           className={`px-4 py-2.5 text-sm font-600 border-b-2 transition-colors ${tab === 'instances' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
         >
-          Scheduled occurrences ({filteredInstances.length})
+          {tr('rtScheduledOccurrences')} ({filteredInstances.length})
         </button>
       </div>
 
       {loading ? (
-        <div className="py-20 text-center text-slate-400 text-sm">Loading…</div>
+        <div className="py-20 text-center text-slate-400 text-sm">{tr('rtLoading')}</div>
       ) : tab === 'templates' ? (
         <>
           <div className="relative mb-4 max-w-sm">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search templates…" className="input-field pl-8" />
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={tr('rtSearchTemplates')} className="input-field pl-8" />
           </div>
 
           <div className="flex flex-wrap items-center gap-2 mb-4">
@@ -554,7 +556,7 @@ export default function RecurringTasksPanel() {
 
           {filteredTemplates.length === 0 ? (
             <div className="py-16 text-center text-slate-400 text-sm border border-dashed border-slate-200 dark:border-slate-700 rounded-2xl">
-              No recurring tasks yet{isManager ? ' — create one to get started.' : '.'}
+              {isManager ? tr('rtNoTasksYetCreate') : tr('rtNoTasksYet')}
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
@@ -570,27 +572,27 @@ export default function RecurringTasksPanel() {
                       <Repeat size={11} /> {FREQUENCY_LABELS[t.frequency]}
                     </span>
                     <span className="flex items-center gap-1 bg-slate-50 dark:bg-slate-700 px-2 py-1 rounded-lg">
-                      <Clock size={11} /> Due {t.due_time?.slice(0, 5) || '17:00'}
+                      <Clock size={11} /> {tr('rtDue')} {t.due_time?.slice(0, 5) || '17:00'}
                     </span>
                     <span className="flex items-center gap-1 bg-slate-50 dark:bg-slate-700 px-2 py-1 rounded-lg">
-                      <Users size={11} /> {t.assigned_to_users?.length || 0} assigned
+                      <Users size={11} /> {t.assigned_to_users?.length || 0} {tr('rtAssigned')}
                     </span>
                   </div>
                   {isManager && (
                     <div className="flex items-center gap-1.5 pt-2 border-t border-slate-100 dark:border-slate-700">
-                      <button onClick={() => toggleActive(t)} title={t.is_active ? 'Pause' : 'Activate'} className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500">
+                      <button onClick={() => toggleActive(t)} title={t.is_active ? tr('rtPause') : tr('rtActivate')} className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500">
                         {t.is_active ? <PowerOff size={14} /> : <Power size={14} />}
                       </button>
-                      <button onClick={() => generateMore(t)} disabled={generatingId === t.id} title="Generate more occurrences" className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500 disabled:opacity-50">
+                      <button onClick={() => generateMore(t)} disabled={generatingId === t.id} title={tr('rtGenerateMore')} className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500 disabled:opacity-50">
                         <Zap size={14} className={generatingId === t.id ? 'animate-pulse' : ''} />
                       </button>
-                      <button onClick={() => duplicateTemplate(t)} title="Duplicate" className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500">
+                      <button onClick={() => duplicateTemplate(t)} title={tr('rtDuplicate')} className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500">
                         <Copy size={14} />
                       </button>
-                      <button onClick={() => openEdit(t)} title="Edit" className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500">
+                      <button onClick={() => openEdit(t)} title={tr('rtEdit')} className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500">
                         <Edit2 size={14} />
                       </button>
-                      <button onClick={() => deleteTemplate(t)} title="Delete" className="p-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/30 text-slate-400 hover:text-red-500 ml-auto">
+                      <button onClick={() => deleteTemplate(t)} title={tr('rtDelete')} className="p-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/30 text-slate-400 hover:text-red-500 ml-auto">
                         <Trash2 size={14} />
                       </button>
                     </div>
@@ -605,14 +607,14 @@ export default function RecurringTasksPanel() {
           <div className="flex flex-wrap items-center gap-2 mb-4">
             {isManager && (
               <div className="flex rounded-xl border border-slate-200 dark:border-slate-600 overflow-hidden text-xs font-600">
-                <button onClick={() => setInstanceScope('mine')} className={`px-3 py-1.5 ${instanceScope === 'mine' ? 'bg-blue-600 text-white' : 'bg-white dark:bg-slate-700 text-slate-600 dark:text-slate-300'}`}>Mine</button>
-                <button onClick={() => setInstanceScope('all')} className={`px-3 py-1.5 ${instanceScope === 'all' ? 'bg-blue-600 text-white' : 'bg-white dark:bg-slate-700 text-slate-600 dark:text-slate-300'}`}>Everyone</button>
+                <button onClick={() => setInstanceScope('mine')} className={`px-3 py-1.5 ${instanceScope === 'mine' ? 'bg-blue-600 text-white' : 'bg-white dark:bg-slate-700 text-slate-600 dark:text-slate-300'}`}>{tr('rtMine')}</button>
+                <button onClick={() => setInstanceScope('all')} className={`px-3 py-1.5 ${instanceScope === 'all' ? 'bg-blue-600 text-white' : 'bg-white dark:bg-slate-700 text-slate-600 dark:text-slate-300'}`}>{tr('rtEveryone')}</button>
               </div>
             )}
             {filterSelects}
             <div className="relative">
               <select value={instanceStatusFilter} onChange={(e) => setInstanceStatusFilter(e.target.value as any)} className="input-field pr-8 appearance-none cursor-pointer text-xs py-1.5">
-                <option value="all">All statuses</option>
+                <option value="all">{tr('rtAllStatuses')}</option>
                 {(Object.keys(STATUS_STYLE) as InstanceStatus[]).map((s) => <option key={s} value={s}>{STATUS_STYLE[s].label}</option>)}
               </select>
               <ChevronDown size={12} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
@@ -621,7 +623,7 @@ export default function RecurringTasksPanel() {
 
           {filteredInstances.length === 0 ? (
             <div className="py-16 text-center text-slate-400 text-sm border border-dashed border-slate-200 dark:border-slate-700 rounded-2xl">
-              No scheduled occurrences match this filter.
+              {tr('rtNoOccurrences')}
             </div>
           ) : (
             <div className="space-y-2">
@@ -645,9 +647,9 @@ export default function RecurringTasksPanel() {
                     {mine && inst.status !== 'completed' && inst.status !== 'cancelled' && (
                       <div className="flex items-center gap-1">
                         {inst.status === 'pending' && (
-                          <button onClick={() => updateInstanceStatus(inst, 'in_progress')} className="text-[11px] px-2 py-1 rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100">Start</button>
+                          <button onClick={() => updateInstanceStatus(inst, 'in_progress')} className="text-[11px] px-2 py-1 rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100">{tr('rtStart')}</button>
                         )}
-                        <button onClick={() => updateInstanceStatus(inst, 'completed')} className="text-[11px] px-2 py-1 rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-100">Complete</button>
+                        <button onClick={() => updateInstanceStatus(inst, 'completed')} className="text-[11px] px-2 py-1 rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-100">{tr('rtComplete')}</button>
                       </div>
                     )}
                   </div>
@@ -670,7 +672,7 @@ export default function RecurringTasksPanel() {
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 dark:border-slate-700">
-              <h3 className="text-base font-700 text-slate-900 dark:text-slate-100">{editingId ? 'Edit recurring task' : 'New recurring task'}</h3>
+              <h3 className="text-base font-700 text-slate-900 dark:text-slate-100">{editingId ? tr('rtEditRecurringTask') : tr('rtNewRecurringTask')}</h3>
               <button onClick={() => { setShowForm(false); resetForm(); }} className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700">
                 <X size={18} className="text-slate-500" />
               </button>
@@ -678,24 +680,24 @@ export default function RecurringTasksPanel() {
 
             <div className="px-6 py-5 space-y-4">
               <div>
-                <label className="block text-xs font-600 text-slate-700 dark:text-slate-300 mb-1.5">Title *</label>
-                <input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="e.g. Weekly compliance report" className="input-field" />
+                <label className="block text-xs font-600 text-slate-700 dark:text-slate-300 mb-1.5">{tr('rtTitleField')}</label>
+                <input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder={tr('rtTitlePlaceholder')} className="input-field" />
               </div>
 
               <div>
-                <label className="block text-xs font-600 text-slate-700 dark:text-slate-300 mb-1.5">Description</label>
+                <label className="block text-xs font-600 text-slate-700 dark:text-slate-300 mb-1.5">{tr('rtDescriptionLabel')}</label>
                 <textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} rows={2} className="input-field resize-none" />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-600 text-slate-700 dark:text-slate-300 mb-1.5">Frequency</label>
+                  <label className="block text-xs font-600 text-slate-700 dark:text-slate-300 mb-1.5">{tr('rtFrequency')}</label>
                   <select value={form.frequency} onChange={(e) => setForm({ ...form, frequency: e.target.value as Frequency })} className="input-field appearance-none cursor-pointer">
                     {(Object.keys(FREQUENCY_LABELS) as Frequency[]).map((f) => <option key={f} value={f}>{FREQUENCY_LABELS[f]}</option>)}
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs font-600 text-slate-700 dark:text-slate-300 mb-1.5">Priority</label>
+                  <label className="block text-xs font-600 text-slate-700 dark:text-slate-300 mb-1.5">{tr('rtPriority')}</label>
                   <select value={form.priority} onChange={(e) => setForm({ ...form, priority: e.target.value as Priority })} className="input-field appearance-none cursor-pointer">
                     {(['low', 'medium', 'high', 'critical'] as Priority[]).map((p) => <option key={p} value={p}>{p}</option>)}
                   </select>
@@ -704,43 +706,43 @@ export default function RecurringTasksPanel() {
 
               {form.frequency === 'custom' && (
                 <div>
-                  <label className="block text-xs font-600 text-slate-700 dark:text-slate-300 mb-1.5">Repeat every N days</label>
+                  <label className="block text-xs font-600 text-slate-700 dark:text-slate-300 mb-1.5">{tr('rtRepeatEveryN')}</label>
                   <input type="number" min={1} value={form.custom_interval_days} onChange={(e) => setForm({ ...form, custom_interval_days: Number(e.target.value) })} className="input-field" />
                 </div>
               )}
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-600 text-slate-700 dark:text-slate-300 mb-1.5">Due date (first occurrence)</label>
+                  <label className="block text-xs font-600 text-slate-700 dark:text-slate-300 mb-1.5">{tr('rtDueDateFirst')}</label>
                   <input type="date" value={form.start_date} onChange={(e) => setForm({ ...form, start_date: e.target.value })} className="input-field" />
-                  <p className="text-[11px] text-slate-400 mt-1">Repeats are based on this due date.</p>
+                  <p className="text-[11px] text-slate-400 mt-1">{tr('rtRepeatsBasedOn')}</p>
                 </div>
                 <div>
-                  <label className="block text-xs font-600 text-slate-700 dark:text-slate-300 mb-1.5">Repeat up to (optional)</label>
+                  <label className="block text-xs font-600 text-slate-700 dark:text-slate-300 mb-1.5">{tr('rtRepeatUpTo')}</label>
                   <input type="date" value={form.end_date} onChange={(e) => setForm({ ...form, end_date: e.target.value })} className="input-field" />
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-600 text-slate-700 dark:text-slate-300 mb-1.5">Due time</label>
+                  <label className="block text-xs font-600 text-slate-700 dark:text-slate-300 mb-1.5">{tr('rtDueTime')}</label>
                   <input type="time" value={form.due_time} onChange={(e) => setForm({ ...form, due_time: e.target.value })} className="input-field" />
                 </div>
                 <div>
-                  <label className="block text-xs font-600 text-slate-700 dark:text-slate-300 mb-1.5">Time limit (min)</label>
+                  <label className="block text-xs font-600 text-slate-700 dark:text-slate-300 mb-1.5">{tr('rtTimeLimit')}</label>
                   <input type="number" min={5} value={form.time_limit_minutes} onChange={(e) => setForm({ ...form, time_limit_minutes: Number(e.target.value) })} className="input-field" />
                 </div>
               </div>
 
               <label className="flex items-center gap-2 text-xs font-600 text-slate-700 dark:text-slate-300">
                 <input type="checkbox" checked={form.weekday_only} onChange={(e) => setForm({ ...form, weekday_only: e.target.checked })} />
-                Skip weekends
+                {tr('rtSkipWeekends')}
               </label>
 
               {/* Firms: one or more; people below are members of the picked firms */}
               <div>
                 <label className="block text-xs font-600 text-slate-700 dark:text-slate-300 mb-1.5">
-                  Firms <span className="text-slate-400 font-400">(select one or more)</span>
+                  {tr('rtFirms')} <span className="text-slate-400 font-400">{tr('rtSelectOneOrMore')}</span>
                 </label>
                 <div className="flex flex-wrap gap-1.5">
                   {firmOptions.map((fm) => {
@@ -772,23 +774,23 @@ export default function RecurringTasksPanel() {
                   })}
                 </div>
                 <p className="text-[11px] text-slate-400 mt-1">
-                  {form.firm_ids.length === 0 ? 'No firm picked: people from all firms are shown' : `${form.firm_ids.length} firm${form.firm_ids.length > 1 ? 's' : ''} selected`}
+                  {form.firm_ids.length === 0 ? tr('rtNoFirmPicked') : form.firm_ids.length === 1 ? tr('rtOneFirmSelected') : tr('rtFirmsSelected').replace('{count}', String(form.firm_ids.length))}
                 </p>
               </div>
 
               <div>
-                <label className="block text-xs font-600 text-slate-700 dark:text-slate-300 mb-1.5">Client / Subsidiary</label>
+                <label className="block text-xs font-600 text-slate-700 dark:text-slate-300 mb-1.5">{tr('rtClientSubsidiary')}</label>
                 <select value={form.client_pick} onChange={(e) => setForm({ ...form, client_pick: e.target.value })} className="input-field appearance-none cursor-pointer">
-                  <option value="">Internal</option>
+                  <option value="">{tr('rtInternal')}</option>
                   {firmOptions.some((f) => f.firm_type === 'subsidiary') && (
-                    <optgroup label="Subsidiaries">
+                    <optgroup label={tr('rtSubsidiaries')}>
                       {firmOptions.filter((f) => f.firm_type === 'subsidiary').map((f) => (
                         <option key={`firm:${f.id}`} value={`firm:${f.id}`}>{f.name}</option>
                       ))}
                     </optgroup>
                   )}
                   {clientOrgs.length > 0 && (
-                    <optgroup label="Clients">
+                    <optgroup label={tr('rtClients')}>
                       {clientOrgs.map((o) => <option key={`client:${o.id}`} value={`client:${o.id}`}>{o.name}</option>)}
                     </optgroup>
                   )}
@@ -796,7 +798,7 @@ export default function RecurringTasksPanel() {
               </div>
 
               <div>
-                <label className="block text-xs font-600 text-slate-700 dark:text-slate-300 mb-1.5">Assign to *</label>
+                <label className="block text-xs font-600 text-slate-700 dark:text-slate-300 mb-1.5">{tr('rtAssignTo')}</label>
                 <div className="max-h-40 overflow-y-auto border border-slate-200 dark:border-slate-600 rounded-xl p-2 space-y-1">
                   {allUsers.filter((u) => form.firm_ids.length === 0 || (!!u.firm_id && form.firm_ids.includes(u.firm_id))).map((u) => (
                     <label key={u.id} className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700 cursor-pointer text-sm">
@@ -822,29 +824,29 @@ export default function RecurringTasksPanel() {
               {/* Subtasks: each has its own title and assignee; every occurrence gets its own tick */}
               <div>
                 <div className="flex items-center justify-between mb-1.5">
-                  <label className="text-xs font-600 text-slate-700 dark:text-slate-300">Subtasks</label>
+                  <label className="text-xs font-600 text-slate-700 dark:text-slate-300">{tr('rtSubtasks')}</label>
                   <button type="button"
                     onClick={() => setForm((f) => ({ ...f, subtasks: [...f.subtasks, { title: '', assigned_to: '' }] }))}
                     className="text-xs font-semibold text-blue-600 hover:text-blue-700 flex items-center gap-1">
-                    <Plus size={12} /> Add subtask
+                    <Plus size={12} /> {tr('rtAddSubtask')}
                   </button>
                 </div>
                 {form.subtasks.length === 0 && (
-                  <p className="text-[11px] text-slate-400">No subtasks yet.</p>
+                  <p className="text-[11px] text-slate-400">{tr('rtNoSubtasks')}</p>
                 )}
                 <div className="space-y-2">
                   {form.subtasks.map((s, i) => (
                     <div key={s.id || `new-${i}`} className="grid grid-cols-12 gap-2 items-center">
                       <input
                         className="input-field col-span-11"
-                        placeholder="Subtask title"
+                        placeholder={tr('rtSubtaskTitle')}
                         value={s.title}
                         onChange={(e) => setForm((f) => ({ ...f, subtasks: f.subtasks.map((x, j) => (j === i ? { ...x, title: e.target.value } : x)) }))}
                       />
                       <button type="button"
                         onClick={() => setForm((f) => ({ ...f, subtasks: f.subtasks.filter((_, j) => j !== i) }))}
                         className="col-span-1 flex justify-center text-red-500 hover:text-red-600"
-                        aria-label="Remove subtask">
+                        aria-label={tr('rtRemoveSubtask')}>
                         <X size={14} />
                       </button>
                     </div>
@@ -855,10 +857,10 @@ export default function RecurringTasksPanel() {
 
             <div className="flex items-center gap-3 px-6 py-4 border-t border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-700/30">
               <button onClick={() => { setShowForm(false); resetForm(); }} className="flex-1 py-2.5 rounded-xl border border-slate-200 dark:border-slate-600 text-sm font-600 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700">
-                Cancel
+                {tr('rtCancel')}
               </button>
               <button onClick={handleSave} disabled={saving} className="flex-1 btn-primary py-2.5 disabled:opacity-50">
-                {saving ? 'Saving…' : editingId ? 'Save changes' : 'Create & schedule'}
+                {saving ? tr('rtSaving') : editingId ? tr('rtSaveChanges') : tr('rtCreateSchedule')}
               </button>
             </div>
           </div>
