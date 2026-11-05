@@ -8,7 +8,6 @@ import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast, Toaster } from 'sonner';
 import { useRouter } from 'next/navigation';
-import Icon from '@/components/ui/AppIcon';
 
 
 interface TaskRecord {
@@ -58,7 +57,8 @@ function downloadCSV(filename: string, headers: string[], rows: string[][]) {
   if (typeof window !== 'undefined') {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url; a.download = filename; a.click();
+    a.href = url; a.download = filename;
+    a.click();
     URL.revokeObjectURL(url);
   }
 }
@@ -117,38 +117,54 @@ export default function TaskAnalytics() {
     setLoading(true);
     setError(null);
     try {
-      const [tasksRes, usersRes, instancesRes] = await Promise.all([
-        supabase
+      // Supabase returns at most 1,000 rows per request, so read every page
+      const fetchAll = async (build: () => any): Promise<any[]> => {
+        const out: any[] = [];
+        for (let from = 0; ; from += 1000) {
+          const { data, error } = await build().range(from, from + 999);
+          if (error) throw error;
+          out.push(...(data || []));
+          if (!data || data.length < 1000) break;
+        }
+        return out;
+      };
+
+      const [tasksRows, usersRes, instancesRows] = await Promise.all([
+        fetchAll(() => supabase
           .from('tasks')
           .select('id, title, status, priority, due_date, due_time, assigned_to_name, assigned_to_dept, assigned_user_ids, assigned_to_user_id, created_at, completed_at, time_to_complete_minutes, is_overdue, task_category, recurring, instance_date, parent_recurring_task_id')
           .eq('is_recurring', false)
-          .order('created_at', { ascending: false }),
+          .order('created_at', { ascending: false })
+          .order('id')),
         supabase.from('user_profiles').select('id, full_name, department').order('full_name'),
-        supabase
+        fetchAll(() => supabase
           .from('recurring_task_instances')
-          .select('id, task_name, status, priority, due_date, due_time, assigned_to_name, assigned_to_dept, assigned_to, assigned_datetime, completion_datetime, time_taken_minutes, is_overdue, frequency, recurring_task_id, client_org_name, organisation_relates_to')
-          .order('due_date', { ascending: false }),
+          .select('id, task_name, status, priority, due_date, due_time, assigned_to, assigned_datetime, completion_datetime, time_taken_minutes, is_overdue, frequency, recurring_task_id, client_org_name, organisation_relates_to')
+          .order('due_date', { ascending: false })
+          .order('id')),
       ]);
-      if (tasksRes.error) throw tasksRes.error;
       if (usersRes.error) throw usersRes.error;
 
-      const mapped = (tasksRes.data || []).map((t: any) => ({
+      const mapped = tasksRows.map((t: any) => ({
         ...t,
         assigned_user_ids: Array.isArray(t.assigned_user_ids) ? t.assigned_user_ids : [],
         is_overdue: t.is_overdue || (t.due_date && t.due_date < today && t.status !== 'done' && t.status !== 'completed'),
         source: 'task' as const,
       }));
 
+      // Occurrence names come from the user list, not from columns that may be missing in the database
+      const userById = new Map<string, UserProfile>((usersRes.data || []).map((u: any) => [u.id, u as UserProfile]));
+
       // Map recurring instances to TaskRecord shape
-      const instancesMapped = (instancesRes.data || []).map((i: any) => ({
+      const instancesMapped = instancesRows.map((i: any) => ({
         id: i.id,
         title: i.task_name || 'Recurring Task',
         status: i.status,
         priority: i.priority || 'medium',
         due_date: i.due_date,
         due_time: i.due_time || null,
-        assigned_to_name: i.assigned_to_name || '—',
-        assigned_to_dept: i.assigned_to_dept || '—',
+        assigned_to_name: userById.get(i.assigned_to)?.full_name || '—',
+        assigned_to_dept: userById.get(i.assigned_to)?.department || '—',
         assigned_user_ids: i.assigned_to ? [i.assigned_to] : [],
         assigned_to_user_id: i.assigned_to || null,
         created_at: i.assigned_datetime || i.due_date,
